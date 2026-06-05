@@ -1,0 +1,10 @@
+openai
+pyTelegramBotAPI
+SpeechRecognition
+pydub
+python-docx
+pandas
+openpyxl
+requests
+supervisor
+python-dotenv
