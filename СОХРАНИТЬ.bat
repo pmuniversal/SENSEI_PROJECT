@@ -21,7 +21,7 @@ if %errorlevel%==0 (
 if "%GIT%"=="" (
     echo [ОШИБКА] Git не найден. Установлен ли GitHub Desktop?
     echo.
-    pause
+    if not "%1"=="auto" pause
     exit /b 1
 )
 
@@ -47,7 +47,7 @@ if %errorlevel% neq 0 (
     echo [ВНИМАНИЕ] Не удалось отправить в GitHub.
     echo Проверь интернет и что ты вошёл в GitHub Desktop.
     echo.
-    pause
+    if not "%1"=="auto" pause
     exit /b 1
 )
 
@@ -57,4 +57,4 @@ echo   ГОТОВО. Всё сохранено в трёх местах:
 echo   1) Ноут   2) Google Диск (само)   3) GitHub
 echo ==================================================
 echo.
-timeout /t 4 >nul
+if not "%1"=="auto" timeout /t 4 >nul
