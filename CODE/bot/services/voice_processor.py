@@ -4,49 +4,41 @@ voice_processor.py — Умная обработка голосовых сооб
 
 Возможности:
   - Высококачественная транскрипция (рус + узб) через Whisper
-  - Длинные записи (50-60 мин): разбивка на части по 24 МБ
+  - Нормализация аудио (моно, 16 кГц) — чинит битые метаданные после сжатия
+  - Длинные записи (50-60 мин): разбивка на части по ~10 минут
   - Умный контекст: бот понимает что делать с аудио
-  - Если контекст не указан — задаёт вопрос пользователю
-  - Режимы: обычный диалог | резюме | собрание (Bayonnoma/Agenda)
+  - Защита от галлюцинаций Whisper (без инструктивного промпта)
 """
 
-import io
-import math
 import os
 import tempfile
-from pathlib import Path
 
 from pydub import AudioSegment
 
-from bot import config
 from bot.services.ai import client
 
-# Максимальный размер одного куска для Whisper API — 24 МБ (лимит 25 МБ)
-WHISPER_MAX_BYTES = 24 * 1024 * 1024
+# Длина одного куска для Whisper — 10 минут (моно 16кГц mp3 ≈ 5-7 МБ, лимит 25 МБ)
+CHUNK_MS = 10 * 60 * 1000  # 10 минут в миллисекундах
 
-# Ключевые слова для определения режима из текста транскрипции или команды
+# Ключевые слова для определения режима
 MEETING_KEYWORDS = [
-    "bayonnoma", "bayonnoma qil", "sobraniye", "собрание", "йиғилиш",
+    "bayonnoma", "sobraniye", "собрание", "йиғилиш", "yig'ilish",
     "meeting", "протокол", "шаблон собрания", "шаблон1", "kunlik uchrashuv",
-    "daily meeting", "резюме собрания"
+    "daily meeting", "резюме собрания", "agenda", "повестка"
 ]
-
 SUMMARY_KEYWORDS = [
     "резюме", "краткое содержание", "summary", "qisqacha", "главные мысли",
-    "что важное", "итоги", "выдели главное"
+    "что важное", "итоги", "выдели главное", "краткое"
 ]
-
 FINANCE_KEYWORDS = [
     "финанс", "деньги", "расход", "доход", "финансы", "бюджет", "трата",
     "moliya", "pul", "xarajat", "daromad"
 ]
+CHAT_KEYWORDS = ["чат", "разговор", "chat", "обычный"]
 
 
 def detect_mode(text: str) -> str:
-    """
-    Определяет режим обработки по тексту.
-    Возвращает: 'meeting' | 'summary' | 'finance' | 'chat'
-    """
+    """Определяет режим: 'meeting' | 'summary' | 'finance' | 'chat'."""
     t = text.lower()
     if any(kw in t for kw in MEETING_KEYWORDS):
         return "meeting"
@@ -57,68 +49,91 @@ def detect_mode(text: str) -> str:
     return "chat"
 
 
-def transcribe_audio(ogg_path: str) -> str:
+def _normalize_audio(src_path: str) -> AudioSegment:
     """
-    Транскрибирует аудио файл в текст.
-    Длинные файлы разбивает на части по 24 МБ и склеивает результат.
-    Использует промпт для лучшего качества на рус/узб.
+    Загружает аудио ЛЮБОГО формата и нормализует:
+      - моно (1 канал)
+      - 16 кГц (оптимально для распознавания речи)
+    Это чинит битые метаданные после внешнего сжатия (m4a и т.д.).
     """
-    file_size = os.path.getsize(ogg_path)
-
-    # Загружаем аудио
-    audio = AudioSegment.from_file(ogg_path)
-
-    if file_size <= WHISPER_MAX_BYTES:
-        # Короткое аудио — транскрибируем целиком
-        return _transcribe_segment(audio, ogg_path)
-
-    # Длинное аудио — разбиваем на части
-    # Считаем продолжительность одной части пропорционально размеру
-    total_ms = len(audio)
-    parts_count = math.ceil(file_size / WHISPER_MAX_BYTES)
-    part_ms = total_ms // parts_count
-
-    transcripts = []
-    for i in range(parts_count):
-        start = i * part_ms
-        end = min((i + 1) * part_ms, total_ms)
-        segment = audio[start:end]
-        part_text = _transcribe_segment(segment)
-        transcripts.append(part_text)
-
-    return " ".join(transcripts)
+    audio = AudioSegment.from_file(src_path)
+    audio = audio.set_channels(1).set_frame_rate(16000)
+    return audio
 
 
-def _transcribe_segment(audio_or_path, path_hint=None) -> str:
-    """Транскрибирует один сегмент аудио через Whisper."""
-    prompt = (
-        "Это личная заметка или запись разговора на русском или узбекском языке. "
-        "Транскрибируй точно, сохраняя имена, термины и числа."
-    )
+def _transcribe_one(audio: AudioSegment) -> str:
+    """Транскрибирует один сегмент. БЕЗ инструктивного промпта (избегаем галлюцинаций)."""
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        # Экспортируем с нормальным битрейтом
+        audio.export(tmp_path, format="mp3", bitrate="64k")
 
-    if isinstance(audio_or_path, str):
-        # Это путь к файлу
-        with open(audio_or_path, "rb") as f:
+        # Если сегмент почти тишина — пропускаем (защита от галлюцинаций)
+        if audio.dBFS == float("-inf") or audio.dBFS < -50:
+            return ""
+
+        with open(tmp_path, "rb") as f:
             result = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=f,
-                prompt=prompt,
+                temperature=0,
+                # НЕ передаём prompt с инструкциями! Это вызывало эхо-галлюцинации.
+                # response_format text — чистый текст без таймкодов
+                response_format="text",
             )
-        return result.text
-    else:
-        # Это AudioSegment — экспортируем во временный файл
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-            tmp_path = tmp.name
+        # При response_format="text" возвращается строка
+        text = result if isinstance(result, str) else getattr(result, "text", "")
+        return _clean_hallucination(text)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
-        try:
-            audio_or_path.export(tmp_path, format="mp3")
-            with open(tmp_path, "rb") as f:
-                result = client.audio.transcriptions.create(
-                    model="whisper-1",
-                    file=f,
-                    prompt=prompt,
-                )
-            return result.text
-        finally:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
+
+def _clean_hallucination(text: str) -> str:
+    """
+    Убирает повторяющиеся фразы-галлюцинации Whisper.
+    Если одна и та же фраза повторяется подряд много раз — оставляем одну.
+    """
+    if not text:
+        return ""
+    # Разбиваем на предложения
+    sentences = [s.strip() for s in text.replace("\n", " ").split(".") if s.strip()]
+    cleaned = []
+    prev = None
+    repeat_count = 0
+    for s in sentences:
+        if s == prev:
+            repeat_count += 1
+            if repeat_count >= 2:  # больше 2 повторов подряд — пропускаем
+                continue
+        else:
+            repeat_count = 0
+        cleaned.append(s)
+        prev = s
+    return ". ".join(cleaned).strip()
+
+
+def transcribe_audio(ogg_path: str) -> str:
+    """
+    Транскрибирует аудио файл в текст.
+    Нормализует аудио, при необходимости режет на 10-минутные части.
+    """
+    audio = _normalize_audio(ogg_path)
+    total_ms = len(audio)
+
+    if total_ms <= CHUNK_MS:
+        return _transcribe_one(audio)
+
+    # Длинное аудио — режем на куски по 10 минут
+    transcripts = []
+    start = 0
+    while start < total_ms:
+        end = min(start + CHUNK_MS, total_ms)
+        segment = audio[start:end]
+        part_text = _transcribe_one(segment)
+        if part_text:
+            transcripts.append(part_text)
+        start = end
+
+    return " ".join(transcripts)
