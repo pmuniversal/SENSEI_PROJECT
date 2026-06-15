@@ -62,7 +62,12 @@ def _normalize_audio(src_path: str) -> AudioSegment:
 
 
 def _transcribe_one(audio: AudioSegment) -> str:
-    """Транскрибирует один сегмент. Пробует uz первым, потом ru — берёт лучший."""
+    """
+    Транскрибирует один сегмент.
+    НЕ указываем язык принудительно — Whisper сам определяет лучше.
+    Передаём промпт-подсказку на узбекском/русском для правильного направления.
+    Whisper использует промпт как ПРИМЕР стиля, а НЕ как команду — это безопасно.
+    """
     with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
         tmp_path = tmp.name
     try:
@@ -71,27 +76,25 @@ def _transcribe_one(audio: AudioSegment) -> str:
         if audio.dBFS == float("-inf") or audio.dBFS < -50:
             return ""
 
-        # Пробуем узбекский и русский — берём тот где больше текста (обычно точнее)
-        results = {}
-        for lang in ["uz", "ru"]:
-            try:
-                with open(tmp_path, "rb") as f:
-                    result = client.audio.transcriptions.create(
-                        model="whisper-1",
-                        file=f,
-                        language=lang,
-                        temperature=0,
-                        response_format="text",
-                    )
-                text = result if isinstance(result, str) else getattr(result, "text", "")
-                results[lang] = _clean_hallucination(text.strip())
-            except Exception:
-                results[lang] = ""
+        # Промпт-подсказка: примеры слов на узбекском и русском.
+        # Whisper увидит эти слова и поймёт что ожидать — без принудительного языка.
+        # Именно так работает ovoz_ai: они дают vocabulary hint, не language code.
+        prompt = (
+            "Salom, yig'ilish, ish, viloyat, kurator, topshiriq, "
+            "привет, работа, задача, встреча, собрание, результат"
+        )
 
-        # Возвращаем тот у которого больше слов (обычно это правильный язык)
-        uz_text = results.get("uz", "")
-        ru_text = results.get("ru", "")
-        return uz_text if len(uz_text.split()) >= len(ru_text.split()) else ru_text
+        with open(tmp_path, "rb") as f:
+            result = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=f,
+                prompt=prompt,
+                temperature=0,
+                response_format="text",
+            )
+
+        text = result if isinstance(result, str) else getattr(result, "text", "")
+        return _clean_hallucination(text.strip())
 
     finally:
         if os.path.exists(tmp_path):
