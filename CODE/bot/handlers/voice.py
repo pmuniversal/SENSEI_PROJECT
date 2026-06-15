@@ -189,14 +189,46 @@ def register(bot) -> None:
 def _process_voice_file(bot, message, user_id, ogg_path, mode, context_hint=""):
     """Транскрибирует аудио и обрабатывает по режиму."""
     try:
-        # Уведомляем что обрабатываем
-        status_msg = bot.reply_to(
-            message,
-            "⏳ Транскрибирую аудио... (это может занять ~1-2 мин для длинных записей)",
-        )
+        # Запускаем транскрипцию с обратным отсчётом в одном сообщении
+        status_msg = bot.reply_to(message, "⏳ Транскрибирую... 0 сек")
 
-        # Транскрипция
-        transcript = transcribe_audio(ogg_path)
+        # Таймер — обновляет сообщение каждые 5 сек пока идёт транскрипция
+        import threading
+        stop_timer = threading.Event()
+        elapsed = [0]
+
+        def _ticker():
+            while not stop_timer.is_set():
+                stop_timer.wait(5)
+                if stop_timer.is_set():
+                    break
+                elapsed[0] += 5
+                try:
+                    bot.edit_message_text(
+                        f"⏳ Транскрибирую... {elapsed[0]} сек",
+                        message.chat.id,
+                        status_msg.message_id
+                    )
+                except Exception:
+                    pass
+
+        ticker = threading.Thread(target=_ticker, daemon=True)
+        ticker.start()
+
+        try:
+            transcript = transcribe_audio(ogg_path)
+        finally:
+            stop_timer.set()
+
+        total_sec = elapsed[0] + 5
+        try:
+            bot.edit_message_text(
+                f"✅ Готово за ~{total_sec} сек. Обрабатываю...",
+                message.chat.id,
+                status_msg.message_id
+            )
+        except Exception:
+            pass
 
         if not transcript.strip():
             bot.edit_message_text(

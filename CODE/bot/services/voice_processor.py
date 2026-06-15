@@ -62,29 +62,37 @@ def _normalize_audio(src_path: str) -> AudioSegment:
 
 
 def _transcribe_one(audio: AudioSegment) -> str:
-    """Транскрибирует один сегмент. БЕЗ инструктивного промпта (избегаем галлюцинаций)."""
+    """Транскрибирует один сегмент. Пробует uz первым, потом ru — берёт лучший."""
     with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
         tmp_path = tmp.name
     try:
-        # Экспортируем с нормальным битрейтом
         audio.export(tmp_path, format="mp3", bitrate="64k")
 
-        # Если сегмент почти тишина — пропускаем (защита от галлюцинаций)
         if audio.dBFS == float("-inf") or audio.dBFS < -50:
             return ""
 
-        with open(tmp_path, "rb") as f:
-            result = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=f,
-                temperature=0,
-                # НЕ передаём prompt с инструкциями! Это вызывало эхо-галлюцинации.
-                # response_format text — чистый текст без таймкодов
-                response_format="text",
-            )
-        # При response_format="text" возвращается строка
-        text = result if isinstance(result, str) else getattr(result, "text", "")
-        return _clean_hallucination(text)
+        # Пробуем узбекский и русский — берём тот где больше текста (обычно точнее)
+        results = {}
+        for lang in ["uz", "ru"]:
+            try:
+                with open(tmp_path, "rb") as f:
+                    result = client.audio.transcriptions.create(
+                        model="whisper-1",
+                        file=f,
+                        language=lang,
+                        temperature=0,
+                        response_format="text",
+                    )
+                text = result if isinstance(result, str) else getattr(result, "text", "")
+                results[lang] = _clean_hallucination(text.strip())
+            except Exception:
+                results[lang] = ""
+
+        # Возвращаем тот у которого больше слов (обычно это правильный язык)
+        uz_text = results.get("uz", "")
+        ru_text = results.get("ru", "")
+        return uz_text if len(uz_text.split()) >= len(ru_text.split()) else ru_text
+
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
