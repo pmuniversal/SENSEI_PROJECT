@@ -139,17 +139,27 @@ def ask_ai(user_id, text: str) -> str:
 
     Шаги:
       1. Сохранить вопрос пользователя в память.
-      2. Собрать сообщения: системный промпт + история диалога.
+      2. Собрать сообщения: системный промпт + профиль (долгая память) + история диалога.
       3. Спросить модель gpt-4.1-mini.
       4. Сохранить ответ в память и в документ Word.
-      5. Вернуть текст ответа.
+      5. Извлечь новые факты о пользователе в профиль (фоново).
+      6. Вернуть текст ответа.
     """
     save_memory(user_id, "user", text)
+
+    # Подгружаем профиль (долгая память)
+    from bot.services.profile import get_profile, extract_facts_from_conversation
+    profile_text = get_profile(user_id)
+
+    # Собираем системный промпт + профиль
+    full_system = SYSTEM_PROMPT
+    if profile_text:
+        full_system += "\n\n" + profile_text
 
     messages = [
         {
             "role": "system",
-            "content": SYSTEM_PROMPT,
+            "content": full_system,
         }
     ]
     messages.extend(load_memory(user_id))
@@ -163,5 +173,13 @@ def ask_ai(user_id, text: str) -> str:
 
     save_memory(user_id, "assistant", ai_text)
     save_docx(user_id, text, ai_text)
+
+    # Извлекаем факты для долгой памяти (не блокирует ответ)
+    import threading
+    threading.Thread(
+        target=extract_facts_from_conversation,
+        args=(user_id, text, ai_text),
+        daemon=True
+    ).start()
 
     return ai_text
