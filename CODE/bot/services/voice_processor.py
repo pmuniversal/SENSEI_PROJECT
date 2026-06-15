@@ -1,150 +1,149 @@
 """
-voice_processor.py — Умная обработка голосовых сообщений
-=========================================================
-
-Возможности:
-  - Высококачественная транскрипция (рус + узб) через Whisper
-  - Нормализация аудио (моно, 16 кГц) — чинит битые метаданные после сжатия
-  - Длинные записи (50-60 мин): разбивка на части по ~10 минут
-  - Умный контекст: бот понимает что делать с аудио
-  - Защита от галлюцинаций Whisper (без инструктивного промпта)
+voice_processor.py — Транскрипция рус+узб с конвертацией в латиницу
 """
-
-import os
-import tempfile
-
+import os, re, tempfile
 from pydub import AudioSegment
-
 from bot.services.ai import client
 
-# Длина одного куска для Whisper — 10 минут (моно 16кГц mp3 ≈ 5-7 МБ, лимит 25 МБ)
-CHUNK_MS = 10 * 60 * 1000  # 10 минут в миллисекундах
+CHUNK_MS = 10 * 60 * 1000
 
-# Ключевые слова для определения режима
+# Кириллица → узбекская латиница
+_CYR_TO_LAT = {
+    'А':'A','а':'a','Б':'B','б':'b','В':'V','в':'v','Г':'G','г':'g',
+    'Д':'D','д':'d','Е':'E','е':'e','Ё':'Yo','ё':'yo','Ж':'J','ж':'j',
+    'З':'Z','з':'z','И':'I','и':'i','Й':'Y','й':'y','К':'K','к':'k',
+    'Л':'L','л':'l','М':'M','м':'m','Н':'N','н':'n','О':'O','о':'o',
+    'П':'P','п':'p','Р':'R','р':'r','С':'S','с':'s','Т':'T','т':'t',
+    'У':'U','у':'u','Ф':'F','ф':'f','Х':'X','х':'x','Ч':'Ch','ч':'ch',
+    'Ш':'Sh','ш':'sh',"Ъ":"'","ъ":"'","Э":"E","э":"e","Ю":"Yu","ю":"yu",
+    "Я":"Ya","я":"ya","Ц":"Ts","ц":"ts",
+    'Ғ':"G'",'ғ':"g'",'Қ':'Q','қ':'q','Ҳ':'H','ҳ':'h',
+    "Ў":"O'","ў":"o'",'Ң':'Ng','ң':'ng',
+}
+
+# Русские слова — оставляем кириллицей (частотные)
+_RU_WORDS = {
+    'да','нет','ничего','было','это','на','за','по','как','что','то',
+    'я','ты','он','она','мы','они','вы','не','но','и','а','или',
+    'было','будет','есть','нет','всё','всего','уже','ещё','так','вот',
+}
+
+def _is_russian_word(word: str) -> bool:
+    w = word.lower().strip('.,!?;:')
+    if w in _RU_WORDS:
+        return True
+    # Если слово содержит буквы которых нет в узбекском (Щ,Ь,Ц нечастые в узб)
+    if re.search(r'[щьцъ]', w, re.IGNORECASE):
+        return True
+    return False
+
+def _convert_to_latin(text: str) -> str:
+    """Конвертирует узбекские слова из кириллицы в латиницу, русские оставляет."""
+    words = text.split()
+    result = []
+    for word in words:
+        if _is_russian_word(word):
+            result.append(word)
+        else:
+            converted = ''.join(_CYR_TO_LAT.get(c, c) for c in word)
+            result.append(converted)
+    return ' '.join(result)
+
+# Ключевые слова для режимов
 MEETING_KEYWORDS = [
-    "bayonnoma", "sobraniye", "собрание", "йиғилиш", "yig'ilish",
-    "meeting", "протокол", "шаблон собрания", "шаблон1", "kunlik uchrashuv",
-    "daily meeting", "резюме собрания", "agenda", "повестка"
+    "bayonnoma","sobraniye","собрание","yig'ilish","meeting",
+    "протокол","шаблон собрания","kunlik uchrashuv","daily meeting","agenda","повестка"
 ]
 SUMMARY_KEYWORDS = [
-    "резюме", "краткое содержание", "summary", "qisqacha", "главные мысли",
-    "что важное", "итоги", "выдели главное", "краткое"
+    "резюме","краткое","summary","qisqacha","главные мысли","итоги","выдели"
 ]
 FINANCE_KEYWORDS = [
-    "финанс", "деньги", "расход", "доход", "финансы", "бюджет", "трата",
-    "moliya", "pul", "xarajat", "daromad"
+    "финанс","деньги","расход","доход","бюджет","трата","moliya","pul","xarajat"
 ]
-CHAT_KEYWORDS = ["чат", "разговор", "chat", "обычный"]
-
 
 def detect_mode(text: str) -> str:
-    """Определяет режим: 'meeting' | 'summary' | 'finance' | 'chat'."""
     t = text.lower()
-    if any(kw in t for kw in MEETING_KEYWORDS):
-        return "meeting"
-    if any(kw in t for kw in SUMMARY_KEYWORDS):
-        return "summary"
-    if any(kw in t for kw in FINANCE_KEYWORDS):
-        return "finance"
+    if any(kw in t for kw in MEETING_KEYWORDS): return "meeting"
+    if any(kw in t for kw in SUMMARY_KEYWORDS): return "summary"
+    if any(kw in t for kw in FINANCE_KEYWORDS): return "finance"
     return "chat"
 
-
 def _normalize_audio(src_path: str) -> AudioSegment:
-    """
-    Загружает аудио ЛЮБОГО формата и нормализует:
-      - моно (1 канал)
-      - 16 кГц (оптимально для распознавания речи)
-    Это чинит битые метаданные после внешнего сжатия (m4a и т.д.).
-    """
-    audio = AudioSegment.from_file(src_path)
-    audio = audio.set_channels(1).set_frame_rate(16000)
-    return audio
+    """Моно 16 кГц — оптимально для Whisper, чинит битые метаданные."""
+    return AudioSegment.from_file(src_path).set_channels(1).set_frame_rate(16000)
 
+def _clean_hallucination(text: str) -> str:
+    """Убирает повторяющиеся фразы-галлюцинации."""
+    if not text:
+        return ""
+    sentences = [s.strip() for s in text.replace("\n"," ").split(".") if s.strip()]
+    cleaned, prev, repeat = [], None, 0
+    for s in sentences:
+        if s == prev:
+            repeat += 1
+            if repeat >= 2: continue
+        else:
+            repeat = 0
+        cleaned.append(s)
+        prev = s
+    return ". ".join(cleaned).strip()
 
 def _transcribe_one(audio: AudioSegment) -> str:
     """
-    Транскрибирует один сегмент.
-    НЕ указываем язык принудительно — Whisper сам определяет лучше.
-    Передаём промпт-подсказку на узбекском/русском для правильного направления.
-    Whisper использует промпт как ПРИМЕР стиля, а НЕ как команду — это безопасно.
+    Транскрибирует сегмент.
+    Стратегия как у ovoz_ai:
+      1. Принудительный language="uz" — Whisper пишет узбекский текст
+      2. Постобработка: кириллица → латиница для узбекских слов
+      3. Если результат слишком короткий — пробуем авто-режим
     """
     with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
         tmp_path = tmp.name
     try:
         audio.export(tmp_path, format="mp3", bitrate="64k")
-
         if audio.dBFS == float("-inf") or audio.dBFS < -50:
             return ""
 
-        # Промпт-подсказка: примеры слов на узбекском и русском.
-        # Whisper увидит эти слова и поймёт что ожидать — без принудительного языка.
-        # Именно так работает ovoz_ai: они дают vocabulary hint, не language code.
-        prompt = (
-            "Salom, yig'ilish, ish, viloyat, kurator, topshiriq, "
-            "привет, работа, задача, встреча, собрание, результат"
-        )
-
-        with open(tmp_path, "rb") as f:
-            result = client.audio.transcriptions.create(
+        def _call(lang=None):
+            kwargs = dict(
                 model="whisper-1",
-                file=f,
-                prompt=prompt,
                 temperature=0,
                 response_format="text",
             )
+            if lang:
+                kwargs["language"] = lang
+            with open(tmp_path, "rb") as f:
+                r = client.audio.transcriptions.create(file=f, **kwargs)
+            t = r if isinstance(r, str) else getattr(r, "text", "")
+            return _clean_hallucination(t.strip())
 
-        text = result if isinstance(result, str) else getattr(result, "text", "")
-        return _clean_hallucination(text.strip())
+        # Шаг 1: принудительный uz
+        text_uz = _call("uz")
+
+        # Если результат подозрительно короткий или похож на турецкий (нет узб слов) —
+        # пробуем авто-режим как fallback
+        if len(text_uz.split()) < 3:
+            text_auto = _call()
+            text_uz = text_auto if len(text_auto.split()) > len(text_uz.split()) else text_uz
+
+        # Шаг 2: конвертация кириллицы → латиница
+        return _convert_to_latin(text_uz)
 
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
-
-def _clean_hallucination(text: str) -> str:
-    """
-    Убирает повторяющиеся фразы-галлюцинации Whisper.
-    Если одна и та же фраза повторяется подряд много раз — оставляем одну.
-    """
-    if not text:
-        return ""
-    # Разбиваем на предложения
-    sentences = [s.strip() for s in text.replace("\n", " ").split(".") if s.strip()]
-    cleaned = []
-    prev = None
-    repeat_count = 0
-    for s in sentences:
-        if s == prev:
-            repeat_count += 1
-            if repeat_count >= 2:  # больше 2 повторов подряд — пропускаем
-                continue
-        else:
-            repeat_count = 0
-        cleaned.append(s)
-        prev = s
-    return ". ".join(cleaned).strip()
-
-
-def transcribe_audio(ogg_path: str) -> str:
-    """
-    Транскрибирует аудио файл в текст.
-    Нормализует аудио, при необходимости режет на 10-минутные части.
-    """
-    audio = _normalize_audio(ogg_path)
+def transcribe_audio(src_path: str) -> str:
+    """Транскрибирует файл. Длинные — режет на 10-минутные куски."""
+    audio = _normalize_audio(src_path)
     total_ms = len(audio)
-
     if total_ms <= CHUNK_MS:
         return _transcribe_one(audio)
-
-    # Длинное аудио — режем на куски по 10 минут
-    transcripts = []
+    parts = []
     start = 0
     while start < total_ms:
         end = min(start + CHUNK_MS, total_ms)
-        segment = audio[start:end]
-        part_text = _transcribe_one(segment)
-        if part_text:
-            transcripts.append(part_text)
+        t = _transcribe_one(audio[start:end])
+        if t:
+            parts.append(t)
         start = end
-
-    return " ".join(transcripts)
+    return " ".join(parts)
