@@ -71,30 +71,6 @@ def _get_finance_prompt(transcript: str) -> str:
 def register(bot) -> None:
     """Регистрирует обработчики голосовых сообщений."""
 
-    # --- Обработчик текстовых сообщений с командой режима ---
-    @bot.message_handler(
-        func=lambda m: (
-            m.content_type == "text"
-            and not m.text.startswith("/")
-            and m.chat.id in _pending_context
-            and _pending_context[m.chat.id] == "waiting_context"
-        )
-    )
-    def handle_context_reply(message):
-        """Получаем ответ пользователя на вопрос о контексте аудио."""
-        user_id = message.chat.id
-        context_text = message.text.strip()
-
-        if user_id not in _pending_audio:
-            del _pending_context[user_id]
-            return
-
-        audio_data = _pending_audio.pop(user_id)
-        del _pending_context[user_id]
-
-        mode = detect_mode(context_text)
-        _process_voice_file(bot, message, user_id, audio_data["ogg_path"], mode, context_text)
-
     # --- Основной обработчик голоса ---
     @bot.message_handler(content_types=["voice"])
     def handle_voice(message):

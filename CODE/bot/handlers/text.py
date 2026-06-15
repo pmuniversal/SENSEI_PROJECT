@@ -14,7 +14,6 @@ from bot.services.ai import ask_ai
 from bot.services.telegram_backup import run_on_demand_backup
 
 # Фразы на естественном языке, которые запускают копию по запросу
-# (дублируют команду /backup для удобства).
 _BACKUP_PHRASES = {
     "сделай копию сейчас",
     "сделай копию",
@@ -31,11 +30,29 @@ def register(bot) -> None:
     )
     def handle_text(message):
         try:
-            # Распознаём фразу «сделай копию сейчас» как запрос резервной копии.
             normalized = message.text.strip().lower().rstrip("!.")
+
+            # Резервная копия по фразе
             if normalized in _BACKUP_PHRASES:
                 run_on_demand_backup(bot, message.chat.id)
                 return
+
+            # Проверяем: ожидает ли голосовой обработчик контекст от этого юзера
+            from bot.handlers.voice import _pending_context, _pending_audio
+            user_id = message.chat.id
+            if user_id in _pending_context and _pending_context[user_id] == "waiting_context":
+                from bot.services.voice_processor import detect_mode
+                from bot.handlers.voice import _process_voice_file
+
+                context_text = message.text.strip()
+                if user_id in _pending_audio:
+                    audio_data = _pending_audio.pop(user_id)
+                    del _pending_context[user_id]
+                    mode = detect_mode(context_text)
+                    _process_voice_file(bot, message, user_id, audio_data["ogg_path"], mode, context_text)
+                    return
+                else:
+                    del _pending_context[user_id]
 
             ai_text = ask_ai(message.chat.id, message.text)
             bot.reply_to(message, ai_text)
