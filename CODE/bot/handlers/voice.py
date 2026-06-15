@@ -71,18 +71,81 @@ def _get_finance_prompt(transcript: str) -> str:
 def register(bot) -> None:
     """Регистрирует обработчики голосовых сообщений."""
 
+    # Поддерживаемые аудио-расширения для обработки документов
+    _AUDIO_EXTENSIONS = {".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm", ".ogg", ".oga"}
+
+    # --- Обработчик документов (аудио-файлы через скрепку) ---
+    @bot.message_handler(content_types=["document"],
+                         func=lambda m: m.document and any(
+                             m.document.file_name.lower().endswith(ext) for ext in _AUDIO_EXTENSIONS
+                         ) if m.document and m.document.file_name else False)
+    def handle_audio_document(message):
+        """Обрабатывает аудио-файлы отправленные как документы (m4a, mp3 и т.д.)"""
+        user_id = message.chat.id
+        try:
+            bot.send_chat_action(message.chat.id, "typing")
+
+            file_info = bot.get_file(message.document.file_id)
+            downloaded = bot.download_file(file_info.file_path)
+
+            filename = message.document.file_name or "audio.m4a"
+            ext = filename.split(".")[-1] if "." in filename else "m4a"
+            audio_path = str(config.VOICE_DIR / f"{user_id}_doc.{ext}")
+
+            with open(audio_path, "wb") as f:
+                f.write(downloaded)
+
+            # Определяем режим из caption
+            mode = "unknown"
+            context_hint = ""
+            if message.caption:
+                context_hint = message.caption
+                mode = detect_mode(message.caption)
+
+            if mode == "unknown":
+                _pending_audio[user_id] = {"ogg_path": audio_path}
+                _pending_context[user_id] = "waiting_context"
+                bot.reply_to(
+                    message,
+                    f"🎤 Аудио-файл получил ({filename})! Скажи что с ним делать:\n\n"
+                    "1️⃣ *Обычный разговор* — напиши «чат»\n"
+                    "2️⃣ *Краткое резюме* — напиши «резюме»\n"
+                    "3️⃣ *Протокол собрания* — напиши «собрание»\n"
+                    "4️⃣ *Финансы* — напиши «финансы»\n\n"
+                    "Или опиши своими словами.",
+                    parse_mode="Markdown"
+                )
+                return
+
+            _process_voice_file(bot, message, user_id, audio_path, mode, context_hint)
+
+        except Exception as e:
+            bot.reply_to(message, f"Ошибка обработки аудио-файла:\n{e}")
+
     # --- Основной обработчик голоса ---
-    @bot.message_handler(content_types=["voice"])
+    @bot.message_handler(content_types=["voice", "audio"])
     def handle_voice(message):
         user_id = message.chat.id
 
         try:
-            # Скачиваем файл
             bot.send_chat_action(message.chat.id, "typing")
-            file_info = bot.get_file(message.voice.file_id)
+
+            # Определяем file_id в зависимости от типа
+            if message.voice:
+                file_id = message.voice.file_id
+            elif message.audio:
+                file_id = message.audio.file_id
+            else:
+                bot.reply_to(message, "Не удалось определить аудио-файл.")
+                return
+
+            file_info = bot.get_file(file_id)
             downloaded = bot.download_file(file_info.file_path)
 
-            ogg_path = str(config.VOICE_DIR / f"{user_id}.ogg")
+            # Определяем расширение из пути файла
+            ext = file_info.file_path.split(".")[-1] if "." in file_info.file_path else "ogg"
+            ogg_path = str(config.VOICE_DIR / f"{user_id}.{ext}")
+
             with open(ogg_path, "wb") as f:
                 f.write(downloaded)
 
