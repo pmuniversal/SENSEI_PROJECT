@@ -22,6 +22,7 @@ from bot.handlers import text, voice, commands
 from bot.services.reminders import reminder_loop
 from bot.services.backup import backup_loop
 from bot.services.telegram_backup import backup_offsite_loop
+from bot.services.proactive import proactive_loop
 
 
 def main() -> None:
@@ -43,6 +44,8 @@ def main() -> None:
     # Внешние копии памяти/кода в приватный Telegram-канал (Этап 1).
     # Запускается дополнительно к существующим процессам, не заменяя их.
     threading.Thread(target=backup_offsite_loop, args=(bot,), daemon=True).start()
+    # Проактивность: Сенсей пишет первым (Этап 6).
+    threading.Thread(target=proactive_loop, args=(bot,), daemon=True).start()
 
     # 5. Старт
     print("AI OS STARTED")
