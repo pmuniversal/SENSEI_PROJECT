@@ -54,7 +54,14 @@ def register(bot) -> None:
                 else:
                     del _pending_context[user_id]
 
-            # Умный ввод: определяем — это задача, напоминание или запрос
+            # Финансовый ввод (приоритет выше умного ввода — более детальный парсер)
+            from bot.services.finance import process_finance
+            finance_result = process_finance(message.chat.id, message.text)
+            if finance_result is not None:
+                bot.reply_to(message, finance_result, parse_mode="Markdown")
+                return
+
+            # Умный ввод: задача, напоминание, запрос задач
             from bot.services.smart_input import process_smart_input
             smart_result = process_smart_input(message.chat.id, message.text, bot, message)
             if smart_result is not None:

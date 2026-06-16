@@ -326,10 +326,15 @@ def _handle_summary(bot, message, user_id, transcript):
 
 
 def _handle_finance(bot, message, user_id, transcript):
-    """Финансовая обработка."""
-    prompt = _get_finance_prompt(transcript)
-    analysis = ask_ai(user_id, prompt)
-    bot.reply_to(message, f"💰 *Финансовый анализ:*\n\n{analysis}", parse_mode="Markdown")
+    """Финансовая обработка — сохраняет в БД и выдаёт анализ."""
+    from bot.services.finance import process_finance
+    result = process_finance(user_id, transcript)
+    if result:
+        bot.reply_to(message, result, parse_mode="Markdown")
+    else:
+        prompt = f"Это финансовая заметка. Проанализируй и структурируй:\n\n{transcript}"
+        analysis = ask_ai(user_id, prompt)
+        bot.reply_to(message, f"💰 *Финансовый анализ:*\n\n{analysis}", parse_mode="Markdown")
 
     transcript_path = save_voice_transcript(user_id, transcript)
     with open(transcript_path, "rb") as f:
