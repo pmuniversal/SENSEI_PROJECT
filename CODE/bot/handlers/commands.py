@@ -16,7 +16,7 @@ commands.py — Команды бота (/task, /tasks, /remind)
 """
 
 from bot.services.tasks import add_task, list_tasks
-from bot.services.reminders import add_reminder
+from bot.services.reminders import add_reminder, list_reminders, delete_reminder
 from bot.services.telegram_backup import run_on_demand_backup
 
 
@@ -67,22 +67,44 @@ def register(bot) -> None:
     @bot.message_handler(commands=['remind'])
     def cmd_remind(message):
         try:
-            # Текст после "/remind", ожидаем формат: "время | текст"
             parts = message.text.split(maxsplit=1)
             data = parts[1].strip() if len(parts) > 1 else ""
-
             split_data = data.split("|")
             remind_time = split_data[0].strip()
             reminder_text = split_data[1].strip()
-
-            add_reminder(message.chat.id, remind_time, reminder_text)
-
-            bot.reply_to(
-                message,
-                f"⏰ Напоминание сохранено:\n\n{reminder_text}",
-            )
+            normalized = add_reminder(message.chat.id, remind_time, reminder_text)
+            bot.reply_to(message, f"⏰ Напоминание сохранено:\n\n{reminder_text}\n📅 Когда: {normalized}")
         except Exception:
-            bot.reply_to(
-                message,
-                "Формат:\n/remind 2026-05-25 18:00 | Текст",
-            )
+            bot.reply_to(message, "Формат:\n/remind 2026-06-17 09:00 | Текст")
+
+    @bot.message_handler(commands=['reminders'])
+    def cmd_reminders(message):
+        """Показать список активных напоминаний."""
+        try:
+            rows = list_reminders(message.chat.id)
+            if not rows:
+                bot.reply_to(message, "⏰ Нет активных напоминаний.")
+                return
+            lines = ["⏰ *Активные напоминания:*\n"]
+            for rid, text, rtime in rows:
+                lines.append(f"`{rid}.` {rtime}\n   ➜ {text}")
+            lines.append("\nЧтобы удалить: /delreminder [id]")
+            bot.reply_to(message, "\n".join(lines), parse_mode="Markdown")
+        except Exception as e:
+            bot.reply_to(message, f"Ошибка:\n{e}")
+
+    @bot.message_handler(commands=['delreminder'])
+    def cmd_delreminder(message):
+        """Удалить напоминание по ID."""
+        try:
+            parts = message.text.split(maxsplit=1)
+            rid = int(parts[1].strip()) if len(parts) > 1 else None
+            if rid is None:
+                bot.reply_to(message, "Формат: /delreminder [id]\nID смотри в /reminders")
+                return
+            if delete_reminder(rid, message.chat.id):
+                bot.reply_to(message, f"✅ Напоминание #{rid} удалено.")
+            else:
+                bot.reply_to(message, f"❌ Напоминание #{rid} не найдено.")
+        except Exception as e:
+            bot.reply_to(message, f"Ошибка:\n{e}")

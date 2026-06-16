@@ -127,8 +127,8 @@ def process_smart_input(user_id, text: str, bot=None, message=None) -> str | Non
         if not remind_time:
             return None  # Не удалось определить время — пусть AI разберётся
 
-        add_reminder(user_id, remind_time, remind_text)
-        return f"⏰ Напоминание сохранено:\n\n{remind_text}\n📅 Когда: {remind_time}"
+        normalized = add_reminder(user_id, remind_time, remind_text)
+        return f"⏰ Напоминание сохранено:\n\n{remind_text}\n📅 Когда: {normalized}"
 
     elif msg_type == "query":
         query_sphere = result.get("query_sphere", "all")
