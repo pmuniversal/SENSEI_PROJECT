@@ -66,6 +66,10 @@ def register(bot) -> None:
 
     @bot.message_handler(commands=['backup'])
     def cmd_backup(message):
+        try:
+            run_on_demand_backup(bot, message.chat.id)
+        except Exception as e:
+            bot.reply_to(message, f"Ошибка при создании копии:\n{e}")
 
     @bot.message_handler(commands=['task'])
     def cmd_task(message):
