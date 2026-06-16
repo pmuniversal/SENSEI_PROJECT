@@ -141,12 +141,19 @@ def ask_ai(user_id, text: str) -> str:
     """
     save_memory(user_id, "user", text)
 
+    # Определяем роль автоматически (или берём зафиксированную)
+    from bot.services.roles import auto_detect_and_set, get_role_addition
+    role = auto_detect_and_set(user_id, text)
+    role_addition = get_role_addition(role)
+
     # Подгружаем профиль (долгая память)
     from bot.services.profile import get_profile, extract_facts_from_conversation
     profile_text = get_profile(user_id)
 
-    # Собираем системный промпт + профиль
+    # Собираем системный промпт + роль + профиль
     full_system = SYSTEM_PROMPT
+    if role_addition:
+        full_system += "\n\n" + role_addition
     if profile_text:
         full_system += "\n\n" + profile_text
 

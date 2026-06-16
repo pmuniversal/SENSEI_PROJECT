@@ -17,19 +17,55 @@ commands.py — Команды бота (/task, /tasks, /remind)
 
 from bot.services.tasks import add_task, list_tasks
 from bot.services.reminders import add_reminder, list_reminders, delete_reminder
+from bot.services.roles import set_role, get_role, get_role_name, AVAILABLE_ROLES
 from bot.services.telegram_backup import run_on_demand_backup
 
 
 def register(bot) -> None:
     """Регистрирует все командные обработчики в боте."""
 
+    @bot.message_handler(commands=['role', 'mode'])
+    def cmd_role(message):
+        """Выбрать или показать текущую роль."""
+        try:
+            parts = message.text.split(maxsplit=1)
+            user_id = message.chat.id
+            if len(parts) == 1:
+                # Показать текущую роль и список доступных
+                current = get_role(user_id)
+                lines = [f"🎭 Текущая роль: *{get_role_name(current)}*\n"]
+                lines.append("Доступные роли:")
+                role_map = {
+                    "coach": "🧠 /role coach — ICF-коуч",
+                    "analyst": "📊 /role analyst — Бизнес-аналитик",
+                    "finance": "💰 /role finance — Финансист",
+                    "youtube": "🎥 /role youtube — YouTube-эксперт",
+                    "services": "🌐 /role services — Услуги США/AU/CA",
+                    "meeting": "📋 /role meeting — Модератор встреч",
+                    "tech": "💻 /role tech — Технический советник",
+                    "sensei": "🔮 /role sensei — Базовый Сенсей",
+                    "auto": "🔄 /role auto — Авто (определяет сам)",
+                }
+                for v in role_map.values():
+                    lines.append(v)
+                bot.reply_to(message, "\n".join(lines), parse_mode="Markdown")
+                return
+
+            role_input = parts[1].strip().lower()
+            if role_input == "auto":
+                set_role(user_id, "sensei", locked=False)
+                bot.reply_to(message, "🔄 Авто-режим: роль определяется по контексту сообщения.")
+                return
+            if role_input not in AVAILABLE_ROLES:
+                bot.reply_to(message, f"Неизвестная роль. Напиши /role чтобы увидеть список.")
+                return
+            set_role(user_id, role_input, locked=True)
+            bot.reply_to(message, f"✅ Роль установлена: *{get_role_name(role_input)}*\n\nЧтобы вернуть авто-режим: /role auto", parse_mode="Markdown")
+        except Exception as e:
+            bot.reply_to(message, f"Ошибка:\n{e}")
+
     @bot.message_handler(commands=['backup'])
     def cmd_backup(message):
-        # Копия по запросу: немедленно шлёт базу + экспорт в приватный канал.
-        try:
-            run_on_demand_backup(bot, message.chat.id)
-        except Exception as e:
-            bot.reply_to(message, f"Ошибка при создании копии:\n{e}")
 
     @bot.message_handler(commands=['task'])
     def cmd_task(message):
