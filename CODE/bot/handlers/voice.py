@@ -260,11 +260,26 @@ def _process_voice_file(bot, message, user_id, ogg_path, mode, context_hint=""):
             _handle_finance(bot, message, user_id, transcript)
 
         else:
+            # Режим "chat" — обрабатываем как обычное сообщение с умным вводом
             bot.edit_message_text(
-                "🤖 Передаю в AI...",
+                "🤖 Анализирую и отвечаю...",
                 message.chat.id, status_msg.message_id
             )
-            _handle_chat(bot, message, user_id, transcript)
+            # Используем умный ввод для определения сферы и намерения
+            from bot.services.smart_input import process_smart_input
+            response = process_smart_input(user_id, transcript)
+            
+            # Отправляем транскрипт + ответ AI
+            bot.reply_to(
+                message,
+                f"🎤 *Твои слова:*\n{transcript}\n\n🤖 *Ответ:*\n{response}",
+                parse_mode="Markdown"
+            )
+            
+            # Отправляем транскрипт файлом
+            transcript_path = save_voice_transcript(user_id, transcript)
+            with open(transcript_path, "rb") as f:
+                bot.send_document(message.chat.id, f, caption="🎤 Транскрипт")
 
         # Удаляем статусное сообщение
         try:
@@ -340,17 +355,3 @@ def _handle_finance(bot, message, user_id, transcript):
     with open(transcript_path, "rb") as f:
         bot.send_document(message.chat.id, f, caption="🎤 Транскрипт")
 
-
-def _handle_chat(bot, message, user_id, transcript):
-    """Обычный диалог с AI."""
-    ai_response = ask_ai(user_id, transcript)
-
-    bot.reply_to(
-        message,
-        f"🎤 *Твои слова:*\n{transcript}\n\n🤖 *Ответ:*\n{ai_response}",
-        parse_mode="Markdown"
-    )
-
-    transcript_path = save_voice_transcript(user_id, transcript)
-    with open(transcript_path, "rb") as f:
-        bot.send_document(message.chat.id, f, caption="🎤 Транскрипт")
