@@ -245,6 +245,10 @@ def _process_voice_file(bot, message, user_id, ogg_path, mode, context_hint=""):
             from bot.services.smart_input import process_smart_input
             response = process_smart_input(user_id, transcript)
             
+            # Если smart_input вернул None (обычный чат) — спрашиваем AI напрямую
+            if response is None:
+                response = ask_ai(user_id, transcript)
+            
             # Отправляем транскрипт + ответ AI
             bot.reply_to(
                 message,
