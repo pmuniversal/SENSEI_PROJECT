@@ -91,10 +91,10 @@ def _clean_hallucination(text: str) -> str:
 def _transcribe_one(audio: AudioSegment) -> str:
     """
     Транскрибирует сегмент.
-    Стратегия как у ovoz_ai:
-      1. Принудительный language="uz" — Whisper пишет узбекский текст
+    Стратегия для рус+узб:
+      1. Автоопределение языка (Whisper сам определяет узбекский/русский)
       2. Постобработка: кириллица → латиница для узбекских слов
-      3. Если результат слишком короткий — пробуем авто-режим
+      3. Temperature=0 для точности, prompt подсказывает контекст
     """
     with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
         tmp_path = tmp.name
@@ -103,30 +103,21 @@ def _transcribe_one(audio: AudioSegment) -> str:
         if audio.dBFS == float("-inf") or audio.dBFS < -50:
             return ""
 
-        def _call(lang=None):
-            kwargs = dict(
-                model="whisper-1",
-                temperature=0,
-                response_format="text",
-            )
-            if lang:
-                kwargs["language"] = lang
-            with open(tmp_path, "rb") as f:
-                r = client.audio.transcriptions.create(file=f, **kwargs)
-            t = r if isinstance(r, str) else getattr(r, "text", "")
-            return _clean_hallucination(t.strip())
+        # Вызов Whisper без явного language — автоопределение
+        # Prompt помогает с узбекскими/русскими словами
+        kwargs = dict(
+            model="whisper-1",
+            temperature=0,
+            response_format="text",
+            prompt="Uzbek va rus tilida. Узбекский и русский язык."
+        )
+        with open(tmp_path, "rb") as f:
+            r = client.audio.transcriptions.create(file=f, **kwargs)
+        text = r if isinstance(r, str) else getattr(r, "text", "")
+        text = _clean_hallucination(text.strip())
 
-        # Шаг 1: принудительный uz
-        text_uz = _call("uz")
-
-        # Если результат подозрительно короткий или похож на турецкий (нет узб слов) —
-        # пробуем авто-режим как fallback
-        if len(text_uz.split()) < 3:
-            text_auto = _call()
-            text_uz = text_auto if len(text_auto.split()) > len(text_uz.split()) else text_uz
-
-        # Шаг 2: конвертация кириллицы → латиница
-        return _convert_to_latin(text_uz)
+        # Конвертация кириллицы → латиница для узбекских слов
+        return _convert_to_latin(text)
 
     finally:
         if os.path.exists(tmp_path):
