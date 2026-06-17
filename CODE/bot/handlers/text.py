@@ -61,6 +61,13 @@ def register(bot) -> None:
                 bot.reply_to(message, finance_result, parse_mode="Markdown")
                 return
 
+            # Трекеры: привычки, сон, вес, дофамин
+            from bot.services.trackers import process_tracker
+            tracker_result = process_tracker(message.chat.id, message.text)
+            if tracker_result is not None:
+                bot.reply_to(message, tracker_result, parse_mode="Markdown")
+                return
+
             # Умный ввод: задача, напоминание, запрос задач
             from bot.services.smart_input import process_smart_input
             smart_result = process_smart_input(message.chat.id, message.text, bot, message)
