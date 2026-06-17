@@ -115,7 +115,12 @@ def log_tracker(user_id, data: dict) -> str:
 
     if t_type == "habit":
         streak = _get_streak(user_id, name)
-        return f"{e} *Привычка отмечена:* {name}\n🔥 Стрик: {streak} дней подряд"
+        streak_msg = f"🔥 Стрик: {streak} дней подряд"
+        if streak >= 7:
+            streak_msg += " 🏆 НЕДЕЛЯ!"
+        elif streak >= 3:
+            streak_msg += " 💪 Так держать!"
+        return f"{e} *Привычка отмечена:* {name}\n{streak_msg}"
     elif t_type == "sleep":
         return f"{e} *Сон записан:* {value} часов"
     elif t_type == "weight":

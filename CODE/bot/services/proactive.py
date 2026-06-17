@@ -205,6 +205,10 @@ def send_evening_review(bot, user_id: str):
     try:
         tasks = list_tasks(user_id)
         text = f"🌙 *Вечерний разбор*\n\n{_generate_evening_review(tasks)}"
+        
+        # Добавляем вопрос про трекеры
+        text += "\n\n📊 *Трекеры на сегодня:*\nСколько спал? Залипал в телефон? Вес? Отметь привычки."
+        
         bot.send_message(user_id, text, parse_mode="Markdown")
         _mark_sent(user_id, "evening")
     except Exception as e:
@@ -238,6 +242,22 @@ def send_deadline_alert(bot, user_id: str):
         _mark_sent(user_id, "deadline")
     except Exception as e:
         print(f"[PROACTIVE] Ошибка дедлайн-алерта: {e}")
+
+
+def send_weekly_tracker_report(bot, user_id: str):
+    """Еженедельный отчёт по трекерам (воскресенье)."""
+    if _already_sent(user_id, "weekly_trackers"):
+        return
+    try:
+        from bot.services.trackers import get_tracker_stats
+        stats = get_tracker_stats(user_id, "all")
+        if "Нет данных" in stats:
+            return  # Не спамить если нет данных
+        text = f"📈 *Еженедельный отчёт трекеров*\n\n{stats}"
+        bot.send_message(user_id, text, parse_mode="Markdown")
+        _mark_sent(user_id, "weekly_trackers")
+    except Exception as e:
+        print(f"[PROACTIVE] Ошибка еженедельного отчёта: {e}")
 
 
 # ──────────────────────────────────────────────────
@@ -280,6 +300,10 @@ def proactive_loop(bot):
             # 08:00 — дедлайн-алерт
             elif hour == 8 and minute == 0:
                 send_deadline_alert(bot, owner_id)
+
+            # Воскресенье 20:00 — еженедельный отчёт трекеров
+            elif hour == 20 and minute == 0 and now.weekday() == 6:
+                send_weekly_tracker_report(bot, owner_id)
 
         except Exception as e:
             print(f"[PROACTIVE] Ошибка в цикле: {e}")
