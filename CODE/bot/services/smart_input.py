@@ -156,5 +156,11 @@ def process_smart_input(user_id, text: str, bot=None, message=None) -> str | Non
 
         return result_text
 
-    # type == "chat" — вернуть None, пусть AI обработает как обычно
+    # type == "chat" — проверяем трекеры (сон/вес/дофамин/привычки)
+    from bot.services.trackers import process_tracker
+    tracker_result = process_tracker(user_id, text)
+    if tracker_result:
+        return tracker_result
+
+    # Не трекер и не задача — вернуть None, пусть AI обработает как обычно
     return None
