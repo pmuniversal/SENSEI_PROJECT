@@ -95,28 +95,16 @@ def register(bot) -> None:
             with open(audio_path, "wb") as f:
                 f.write(downloaded)
 
-            # Определяем режим из caption
-            mode = "unknown"
+            # Определяем режим ТОЛЬКО из caption (НЕ спрашиваем)
+            mode = "chat"  # По умолчанию — обычный режим с умным вводом
             context_hint = ""
             if message.caption:
                 context_hint = message.caption
-                mode = detect_mode(message.caption)
+                detected = detect_mode(message.caption)
+                if detected != "chat":
+                    mode = detected
 
-            if mode == "unknown":
-                _pending_audio[user_id] = {"ogg_path": audio_path}
-                _pending_context[user_id] = "waiting_context"
-                bot.reply_to(
-                    message,
-                    f"🎤 Аудио-файл получил ({filename})! Скажи что с ним делать:\n\n"
-                    "1️⃣ *Обычный разговор* — напиши «чат»\n"
-                    "2️⃣ *Краткое резюме* — напиши «резюме»\n"
-                    "3️⃣ *Протокол собрания* — напиши «собрание»\n"
-                    "4️⃣ *Финансы* — напиши «финансы»\n\n"
-                    "Или опиши своими словами.",
-                    parse_mode="Markdown"
-                )
-                return
-
+            # Всегда обрабатываем
             _process_voice_file(bot, message, user_id, audio_path, mode, context_hint)
 
         except Exception as e:
@@ -149,37 +137,25 @@ def register(bot) -> None:
             with open(ogg_path, "wb") as f:
                 f.write(downloaded)
 
-            # Определяем режим из caption или reply
-            mode = "unknown"
+            # Определяем режим ТОЛЬКО из caption или reply (НЕ спрашиваем, если нет)
+            mode = "chat"  # По умолчанию — обычный режим с умным вводом
             context_hint = ""
 
             # Если перед аудио было reply с текстом — используем его как контекст
             if message.reply_to_message and message.reply_to_message.text:
                 context_hint = message.reply_to_message.text
-                mode = detect_mode(context_hint)
+                detected = detect_mode(context_hint)
+                if detected != "chat":
+                    mode = detected
 
             # Если в caption аудио указан режим
             if message.caption:
                 context_hint = message.caption
-                mode = detect_mode(message.caption)
+                detected = detect_mode(message.caption)
+                if detected != "chat":
+                    mode = detected
 
-            if mode == "unknown":
-                # Сохраняем аудио и спрашиваем контекст
-                _pending_audio[user_id] = {"ogg_path": ogg_path}
-                _pending_context[user_id] = "waiting_context"
-
-                bot.reply_to(
-                    message,
-                    "🎤 Аудио получил! Скажи что с ним делать:\n\n"
-                    "1️⃣ *Обычный разговор* — напиши «чат» или «разговор»\n"
-                    "2️⃣ *Краткое резюме* — напиши «резюме» или «краткое»\n"
-                    "3️⃣ *Протокол собрания* (Bayonnoma + Agenda) — напиши «собрание» или «байоннома»\n"
-                    "4️⃣ *Финансы* — напиши «финансы» или «деньги»\n\n"
-                    "Или просто опиши своими словами что это за запись.",
-                    parse_mode="Markdown"
-                )
-                return
-
+            # Всегда обрабатываем (не спрашиваем режим)
             _process_voice_file(bot, message, user_id, ogg_path, mode, context_hint)
 
         except Exception as e:
