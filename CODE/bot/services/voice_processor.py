@@ -1,53 +1,11 @@
 """
-voice_processor.py — Транскрипция рус+узб с конвертацией в латиницу
+voice_processor.py — Транскрипция голоса (только русский)
 """
-import os, re, tempfile
+import os, tempfile
 from pydub import AudioSegment
 from bot.services.ai import client
 
 CHUNK_MS = 10 * 60 * 1000
-
-# Кириллица → узбекская латиница
-_CYR_TO_LAT = {
-    'А':'A','а':'a','Б':'B','б':'b','В':'V','в':'v','Г':'G','г':'g',
-    'Д':'D','д':'d','Е':'E','е':'e','Ё':'Yo','ё':'yo','Ж':'J','ж':'j',
-    'З':'Z','з':'z','И':'I','и':'i','Й':'Y','й':'y','К':'K','к':'k',
-    'Л':'L','л':'l','М':'M','м':'m','Н':'N','н':'n','О':'O','о':'o',
-    'П':'P','п':'p','Р':'R','р':'r','С':'S','с':'s','Т':'T','т':'t',
-    'У':'U','у':'u','Ф':'F','ф':'f','Х':'X','х':'x','Ч':'Ch','ч':'ch',
-    'Ш':'Sh','ш':'sh',"Ъ":"'","ъ":"'","Э":"E","э":"e","Ю":"Yu","ю":"yu",
-    "Я":"Ya","я":"ya","Ц":"Ts","ц":"ts",
-    'Ғ':"G'",'ғ':"g'",'Қ':'Q','қ':'q','Ҳ':'H','ҳ':'h',
-    "Ў":"O'","ў":"o'",'Ң':'Ng','ң':'ng',
-}
-
-# Русские слова — оставляем кириллицей (частотные)
-_RU_WORDS = {
-    'да','нет','ничего','было','это','на','за','по','как','что','то',
-    'я','ты','он','она','мы','они','вы','не','но','и','а','или',
-    'было','будет','есть','нет','всё','всего','уже','ещё','так','вот',
-}
-
-def _is_russian_word(word: str) -> bool:
-    w = word.lower().strip('.,!?;:')
-    if w in _RU_WORDS:
-        return True
-    # Если слово содержит буквы которых нет в узбекском (Щ,Ь,Ц нечастые в узб)
-    if re.search(r'[щьцъ]', w, re.IGNORECASE):
-        return True
-    return False
-
-def _convert_to_latin(text: str) -> str:
-    """Конвертирует узбекские слова из кириллицы в латиницу, русские оставляет."""
-    words = text.split()
-    result = []
-    for word in words:
-        if _is_russian_word(word):
-            result.append(word)
-        else:
-            converted = ''.join(_CYR_TO_LAT.get(c, c) for c in word)
-            result.append(converted)
-    return ' '.join(result)
 
 # Ключевые слова для режимов
 MEETING_KEYWORDS = [
@@ -90,11 +48,7 @@ def _clean_hallucination(text: str) -> str:
 
 def _transcribe_one(audio: AudioSegment) -> str:
     """
-    Транскрибирует сегмент.
-    Стратегия для рус+узб:
-      1. Автоопределение языка (Whisper сам определяет узбекский/русский)
-      2. Постобработка: кириллица → латиница для узбекских слов
-      3. Temperature=0 для точности, prompt подсказывает контекст
+    Транскрибирует сегмент (только русский).
     """
     with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
         tmp_path = tmp.name
@@ -103,21 +57,17 @@ def _transcribe_one(audio: AudioSegment) -> str:
         if audio.dBFS == float("-inf") or audio.dBFS < -50:
             return ""
 
-        # Вызов Whisper без явного language — автоопределение
-        # Prompt помогает с узбекскими/русскими словами
+        # Whisper с принудительным русским языком
         kwargs = dict(
             model="whisper-1",
+            language="ru",
             temperature=0,
             response_format="text",
-            prompt="Uzbek va rus tilida. Узбекский и русский язык."
         )
         with open(tmp_path, "rb") as f:
             r = client.audio.transcriptions.create(file=f, **kwargs)
         text = r if isinstance(r, str) else getattr(r, "text", "")
-        text = _clean_hallucination(text.strip())
-
-        # Конвертация кириллицы → латиница для узбекских слов
-        return _convert_to_latin(text)
+        return _clean_hallucination(text.strip())
 
     finally:
         if os.path.exists(tmp_path):
