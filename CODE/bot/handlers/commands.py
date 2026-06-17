@@ -148,3 +148,48 @@ def register(bot) -> None:
                 bot.reply_to(message, f"❌ Напоминание #{rid} не найдено.")
         except Exception as e:
             bot.reply_to(message, f"Ошибка:\n{e}")
+
+    # ──────────────────────────────────────────────────
+    # База знаний (Этап 15)
+    # ──────────────────────────────────────────────────
+    @bot.message_handler(commands=['learn'])
+    def cmd_learn(message):
+        """Загрузить YouTube видео в базу знаний."""
+        try:
+            from bot.services.knowledge import ingest_youtube
+            parts = message.text.split(maxsplit=1)
+            url = parts[1].strip() if len(parts) > 1 else ""
+            if not url or "youtu" not in url:
+                bot.reply_to(message, "Формат: /learn <YouTube URL>\n\nПример:\n/learn https://www.youtube.com/watch?v=xxxxx")
+                return
+            bot.send_chat_action(message.chat.id, "typing")
+            bot.reply_to(message, "📥 Загружаю и анализирую видео... Это может занять 30-60 сек.")
+            result = ingest_youtube(message.chat.id, url)
+            bot.send_message(message.chat.id, result, parse_mode="Markdown")
+        except Exception as e:
+            bot.reply_to(message, f"Ошибка:\n{e}")
+
+    @bot.message_handler(commands=['knowledge'])
+    def cmd_knowledge(message):
+        """Показать базу знаний."""
+        try:
+            from bot.services.knowledge import list_knowledge
+            result = list_knowledge(message.chat.id)
+            bot.reply_to(message, result, parse_mode="Markdown")
+        except Exception as e:
+            bot.reply_to(message, f"Ошибка:\n{e}")
+
+    @bot.message_handler(commands=['search'])
+    def cmd_search(message):
+        """Поиск по базе знаний."""
+        try:
+            from bot.services.knowledge import search_knowledge
+            parts = message.text.split(maxsplit=1)
+            query = parts[1].strip() if len(parts) > 1 else ""
+            if not query:
+                bot.reply_to(message, "Формат: /search <запрос>\n\nПример:\n/search YouTube алгоритм")
+                return
+            result = search_knowledge(message.chat.id, query)
+            bot.reply_to(message, result, parse_mode="Markdown")
+        except Exception as e:
+            bot.reply_to(message, f"Ошибка:\n{e}")

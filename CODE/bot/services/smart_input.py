@@ -162,5 +162,11 @@ def process_smart_input(user_id, text: str, bot=None, message=None) -> str | Non
     if tracker_result:
         return tracker_result
 
-    # Не трекер и не задача — вернуть None, пусть AI обработает как обычно
+    # Проверяем базу знаний (запомни/что я знаю/знания)
+    from bot.services.knowledge import process_knowledge
+    knowledge_result = process_knowledge(user_id, text)
+    if knowledge_result:
+        return knowledge_result
+
+    # Не трекер, не знание, не задача — вернуть None, пусть AI обработает как обычно
     return None

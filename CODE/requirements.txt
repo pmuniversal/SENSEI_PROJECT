@@ -8,3 +8,4 @@ openpyxl
 requests
 supervisor
 python-dotenv
+youtube-transcript-api
