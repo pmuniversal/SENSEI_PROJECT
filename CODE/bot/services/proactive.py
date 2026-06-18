@@ -295,10 +295,13 @@ def _get_upcoming_payments(days_ahead: int = 3) -> list:
 
 
 def send_credit_reminder(bot, user_id: str):
-    """Напоминание о предстоящих кредитных платежах (за 3 дня)."""
+    """Напоминание о предстоящих кредитных платежах (за 3 дня) + обновление просрочек."""
     if _already_sent(user_id, "credit_reminder"):
         return
     try:
+        # Обновляем просрочки в Google Sheets
+        _update_overdue_in_sheets()
+
         upcoming = _get_upcoming_payments(days_ahead=3)
         if not upcoming:
             return
@@ -318,28 +321,120 @@ def send_credit_reminder(bot, user_id: str):
 
         lines.append(f"\n*Итого к оплате: {total:,.0f} сум*")
 
-        # Добавляем совет по экономии
-        from bot.services.finance import get_balance
-        try:
-            balance = get_balance(user_id)
-            if balance and balance.get("balance_sum"):
-                bal = balance["balance_sum"]
-                if bal < total:
-                    shortfall = total - bal
-                    lines.append(f"\n⚡ Не хватает: {shortfall:,.0f} сум")
-                    lines.append("Срочно найди источник или перенеси необязательные траты.")
-                else:
-                    extra = bal - total
-                    lines.append(f"\n✅ После платежей останется: {extra:,.0f} сум")
-                    if extra > 500_000:
-                        lines.append(f"💡 Лишние {extra:,.0f} сум → закинь на тело кредита с высокой ставкой (AVO/Анорбанк)")
-        except Exception:
-            pass
+        # Совет по досрочному погашению
+        savings_tip = _get_savings_tip(total)
+        if savings_tip:
+            lines.append(f"\n{savings_tip}")
 
         bot.send_message(user_id, "\n".join(lines), parse_mode="Markdown")
         _mark_sent(user_id, "credit_reminder")
     except Exception as e:
         print(f"[PROACTIVE] Ошибка кредитного напоминания: {e}")
+
+
+def _update_overdue_in_sheets():
+    """Обновляет столбец Просрочка в Google Sheets на основе дат платежей."""
+    try:
+        from bot.services.sheets import sheets_manager, SHEET_CREDITS
+        if not sheets_manager.service:
+            return
+
+        today = date.today()
+
+        # Словарь: название кредита → дата последнего платежа (день месяца)
+        # Если дата прошла и оплата не зафиксирована — считаем просрочку
+        overdue_map = {
+            "Анорбанк №1":              {"day": 5,  "amount": 2_537_983},
+            "Анорбанк №2":              {"day": 15, "amount": 1_329_616},
+            "AVO карта":                {"day": 21, "amount": 2_000_000},
+            "Узумбанк микрозайм":       {"day": 25, "amount": 900_000},
+            "Юрлица (государственный)": {"day": 5,  "amount": 1_900_000},
+            "Pulinform (рассрочка)":    {"day": 10, "amount": 2_800_000},
+        }
+
+        # Читаем текущие данные листа
+        result = sheets_manager.service.spreadsheets().values().get(
+            spreadsheetId=sheets_manager.sheet_id,
+            range=f"{SHEET_CREDITS}!A:J"
+        ).execute()
+        rows = result.get("values", [])
+
+        updates = []
+        for i, row in enumerate(rows[1:], start=2):  # пропускаем заголовок
+            if not row:
+                continue
+            credit_name = row[0] if row else ""
+            if credit_name not in overdue_map:
+                continue
+
+            pay_day = overdue_map[credit_name]["day"]
+            try:
+                pay_date = today.replace(day=pay_day)
+            except ValueError:
+                continue
+
+            # Если дата платежа уже прошла в этом месяце
+            if pay_date < today:
+                days_overdue = (today - pay_date).days
+                if days_overdue > 0:
+                    amount = overdue_map[credit_name]["amount"]
+                    # Примерные пени: 0.1% в день
+                    penalty = int(amount * 0.001 * days_overdue)
+                    overdue_text = f"{days_overdue} дн. / штраф ~{penalty:,} сум"
+                else:
+                    overdue_text = "нет"
+            else:
+                # Платёж ещё не наступил
+                days_left = (pay_date - today).days
+                overdue_text = f"через {days_left} дн."
+
+            updates.append({
+                "range": f"{SHEET_CREDITS}!I{i}",
+                "values": [[overdue_text]]
+            })
+
+        if updates:
+            sheets_manager.service.spreadsheets().values().batchUpdate(
+                spreadsheetId=sheets_manager.sheet_id,
+                body={"valueInputOption": "RAW", "data": updates}
+            ).execute()
+            print(f"[PROACTIVE] Обновлено просрочек: {len(updates)}")
+
+    except Exception as e:
+        print(f"[PROACTIVE] Ошибка обновления просрочек: {e}")
+
+
+def _get_savings_tip(payment_total: int) -> str:
+    """Генерирует совет по экономии для закрытия кредита."""
+    try:
+        # Категории где можно сэкономить
+        tips = [
+            ("еда вне дома", 200_000),
+            ("развлечения", 150_000),
+            ("одежда", 300_000),
+            ("такси", 100_000),
+        ]
+        total_savings = sum(a for _, a in tips)
+
+        if total_savings <= 0:
+            return ""
+
+        lines = ["\n💡 *Где сэкономить для платежа:*"]
+        for category, amount in tips:
+            lines.append(f"  • {category}: -{amount:,} сум")
+        lines.append(f"  *Итого экономии: {total_savings:,} сум*")
+
+        # Самый дорогой кредит для досрочки
+        expensive = "AVO карта (45%+) или Анорбанк №2 (47%)"
+        remaining = total_savings - payment_total
+        if remaining > 0:
+            lines.append(f"\n  ✅ Сверх платежа: {remaining:,} сум → закинь на тело {expensive}")
+        elif remaining < 0:
+            lines.append(f"\n  ⚡ Не хватает {abs(remaining):,} сум → найди доп. источник")
+
+        return "\n".join(lines)
+    except Exception:
+        return ""
 
 
 # ──────────────────────────────────────────────────
