@@ -61,7 +61,7 @@ def parse_finance_input(text: str) -> dict | None:
 
 Если сообщение содержит финансовую операцию — верни JSON:
 {{
-  "type": "income|expense|debt_give|debt_take|query_balance|query_report",
+  "type": "income|expense|debt_give|debt_take|query_balance|query_report|query_debts",
   "amount": число или null,
   "currency": "UZS|USD|RUB",
   "category": "категория или null",
@@ -78,6 +78,7 @@ def parse_finance_input(text: str) -> dict | None:
 - debt_take: взял в долг, занял
 - query_balance: мой баланс, сколько денег, остаток
 - query_report: отчёт, сколько потратил, статистика (period: month/week/today)
+- query_debts: покажи долги, список долгов, мои долги, кому должен, у кого должен, долги, кредиты, покажи кредиты, финансовая ситуация
 - Валюта: к/сум/UZS → UZS; $/$$/доллар → USD; по умолчанию UZS
 - к = тысяча (50к = 50000), млн = миллион
 - Сферы: pulinform=работа/взыскание, youtube=ютуб/видео, services=сайт/клиент, life=быт/личное
@@ -86,7 +87,7 @@ def parse_finance_input(text: str) -> dict | None:
 Верни ТОЛЬКО JSON."""
 
     response = client.chat.completions.create(
-        model="gpt-4.1-mini",
+        model="gpt-4.1",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": text},
@@ -243,6 +244,43 @@ def get_report(user_id, period: str = "month") -> str:
     return "\n".join(lines).replace(",", " ")
 
 
+def get_debts_summary() -> str:
+    """Показывает сводку всех кредитов и личных долгов."""
+    lines = ["💳 *Мои кредиты и долги:*\n"]
+
+    # Банковские кредиты
+    lines.append("🏦 *Банки:*")
+    bank_debts = [
+        ("Анорбанк №1",             "17,545,179 сум", "42%", "04.02.2027", ""),
+        ("Анорбанк №2",             "16,240,921 сум", "47%", "14.10.2027", "⚠️ просрочка"),
+        ("AVO карта",               "23,510,000 сум", "45%+", "-",         "весь лимит"),
+        ("Узумбанк микрозайм",      "22,000,000 сум", "44%", "-",          "⚠️ просрочка"),
+        ("Юрлица (гос.)",           "~95,000,000 сум","23%", "2027",       "🔴 КРИТИЧНО"),
+        ("Pulinform рассрочка",     "22,200,000 сум", "0%",  "10.07.2026+","беспроц."),
+    ]
+    total_bank = 0
+    for name, balance, rate, until, note in bank_debts:
+        note_str = f" — {note}" if note else ""
+        lines.append(f"  • {name}: *{balance}* ({rate}){note_str}")
+
+    lines.append("")
+    lines.append("👥 *Личные долги (людям):*")
+    personal_debts = [
+        ("Сирож ака", "$600",   "до 10.07.2026", "🔴 СРОЧНО"),
+        ("Истам",     "$2,287", "срочный",        "⚠️ приоритет"),
+        ("Иван",      "$4,920", "не срочный",     ""),
+        ("Илёс ака",  "$100",   "-",              ""),
+    ]
+    total_usd = 600 + 2287 + 4920 + 100
+    for name, amount, deadline, note in personal_debts:
+        note_str = f" {note}" if note else ""
+        lines.append(f"  • {name}: *{amount}* ({deadline}){note_str}")
+
+    lines.append(f"\n💰 *Итого личных долгов: ${total_usd:,}*")
+    lines.append("\n📊 Полная таблица → Google Sheets «Кредиты и долги»")
+    return "\n".join(lines)
+
+
 # ──────────────────────────────────────────────────
 # Главная функция — обработка финансового текста
 # ──────────────────────────────────────────────────
@@ -264,5 +302,7 @@ def process_finance(user_id, text: str) -> str | None:
     elif t == "query_report":
         period = data.get("period") or "month"
         return get_report(user_id, period)
+    elif t == "query_debts":
+        return get_debts_summary()
 
     return None
