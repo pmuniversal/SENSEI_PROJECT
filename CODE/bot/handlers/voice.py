@@ -249,12 +249,23 @@ def _process_voice_file(bot, message, user_id, ogg_path, mode, context_hint=""):
             if response is None:
                 response = ask_ai(user_id, transcript)
             
-            # Отправляем транскрипт + ответ AI
-            bot.reply_to(
-                message,
-                f"🎤 *Твои слова:*\n{transcript}\n\n🤖 *Ответ:*\n{response}",
-                parse_mode="Markdown"
-            )
+            # Разбиваем длинный ответ на части (лимит Telegram 4096 символов)
+            MAX_LEN = 4000
+            header = f"🎤 *Твои слова:*\n{transcript}\n\n🤖 *Ответ:*\n"
+            
+            if len(header) + len(response) <= MAX_LEN:
+                bot.reply_to(message, header + response, parse_mode="Markdown")
+            else:
+                # Первое сообщение — транскрипт
+                bot.reply_to(message, f"🎤 *Твои слова:*\n{transcript}", parse_mode="Markdown")
+                # Остальные — ответ AI по частям
+                for i in range(0, len(response), MAX_LEN):
+                    chunk = response[i:i + MAX_LEN]
+                    prefix = "🤖 *Ответ:*\n" if i == 0 else ""
+                    try:
+                        bot.send_message(message.chat.id, prefix + chunk, parse_mode="Markdown")
+                    except Exception:
+                        bot.send_message(message.chat.id, prefix + chunk)
             
             # Отправляем транскрипт файлом
             transcript_path = save_voice_transcript(user_id, transcript)

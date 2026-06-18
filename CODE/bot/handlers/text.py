@@ -21,6 +21,55 @@ _BACKUP_PHRASES = {
     "сделай бэкап сейчас",
 }
 
+# Максимальная длина одного сообщения Telegram
+_MAX_MSG_LEN = 4000
+
+
+def _send_long(bot, message, text: str, parse_mode: str = None):
+    """Отправляет длинный текст разбивая на части по 4000 символов."""
+    if len(text) <= _MAX_MSG_LEN:
+        if parse_mode:
+            bot.reply_to(message, text, parse_mode=parse_mode)
+        else:
+            bot.reply_to(message, text)
+        return
+
+    # Разбиваем по абзацам, чтобы не резать на середине предложения
+    chunks = []
+    current = ""
+    for line in text.split("\n"):
+        if len(current) + len(line) + 1 > _MAX_MSG_LEN:
+            if current:
+                chunks.append(current.strip())
+            current = line
+        else:
+            current += ("\n" if current else "") + line
+    if current:
+        chunks.append(current.strip())
+
+    # Первый чанк — reply, остальные — отдельными сообщениями
+    for i, chunk in enumerate(chunks):
+        try:
+            if i == 0:
+                if parse_mode:
+                    bot.reply_to(message, chunk, parse_mode=parse_mode)
+                else:
+                    bot.reply_to(message, chunk)
+            else:
+                if parse_mode:
+                    bot.send_message(message.chat.id, chunk, parse_mode=parse_mode)
+                else:
+                    bot.send_message(message.chat.id, chunk)
+        except Exception:
+            # Если Markdown сломан в чанке — отправляем без форматирования
+            try:
+                if i == 0:
+                    bot.reply_to(message, chunk)
+                else:
+                    bot.send_message(message.chat.id, chunk)
+            except Exception:
+                pass
+
 
 def register(bot) -> None:
     """Регистрирует обработчик обычных текстовых сообщений."""
@@ -58,24 +107,24 @@ def register(bot) -> None:
             from bot.services.finance import process_finance
             finance_result = process_finance(message.chat.id, message.text)
             if finance_result is not None:
-                bot.reply_to(message, finance_result, parse_mode="Markdown")
+                _send_long(bot, message, finance_result, parse_mode="Markdown")
                 return
 
             # Трекеры: привычки, сон, вес, дофамин
             from bot.services.trackers import process_tracker
             tracker_result = process_tracker(message.chat.id, message.text)
             if tracker_result is not None:
-                bot.reply_to(message, tracker_result, parse_mode="Markdown")
+                _send_long(bot, message, tracker_result, parse_mode="Markdown")
                 return
 
             # Умный ввод: задача, напоминание, запрос задач
             from bot.services.smart_input import process_smart_input
             smart_result = process_smart_input(message.chat.id, message.text, bot, message)
             if smart_result is not None:
-                bot.reply_to(message, smart_result)
+                _send_long(bot, message, smart_result)
                 return
 
             ai_text = ask_ai(message.chat.id, message.text)
-            bot.reply_to(message, ai_text)
+            _send_long(bot, message, ai_text)
         except Exception as e:
             bot.reply_to(message, f"Ошибка:\n{e}")
