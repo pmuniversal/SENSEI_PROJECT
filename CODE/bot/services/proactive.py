@@ -271,6 +271,14 @@ CREDIT_SCHEDULE = [
     (21, "AVO карта (мин. платёж)",   2_000_000, "карта"),
 ]
 
+# Долги перед людьми — проверяются отдельно по датам
+PERSONAL_DEBTS = [
+    {"name": "Сирож ака",  "amount_usd": 600,   "deadline": date(2026, 7, 10), "priority": "🔴 СРОЧНО"},
+    {"name": "Истам",      "amount_usd": 2287,  "deadline": None,              "priority": "⚠️ приоритет"},
+    {"name": "Иван",       "amount_usd": 4920,  "deadline": None,              "priority": "нет"},
+    {"name": "Илёс ака",   "amount_usd": 100,   "deadline": None,              "priority": "нет"},
+]
+
 
 def _get_upcoming_payments(days_ahead: int = 3) -> list:
     """Возвращает платежи в ближайшие N дней."""
@@ -303,33 +311,56 @@ def send_credit_reminder(bot, user_id: str):
         _update_overdue_in_sheets()
 
         upcoming = _get_upcoming_payments(days_ahead=3)
-        if not upcoming:
+        personal = _get_urgent_personal_debts()
+
+        if not upcoming and not personal:
             return
 
-        lines = ["💳 *Скоро платежи:*\n"]
-        total = 0
-        for delta, day, name, amount, ptype, pay_date in upcoming:
-            if delta == 0:
-                prefix = "🔴 СЕГОДНЯ"
-            elif delta == 1:
-                prefix = "⚠️ ЗАВТРА"
-            else:
-                prefix = f"📅 Через {delta} дня"
-            lines.append(f"{prefix} — {name}")
-            lines.append(f"   💰 {amount:,.0f} сум ({pay_date.strftime('%d.%m')})")
-            total += amount
+        lines = []
 
-        lines.append(f"\n*Итого к оплате: {total:,.0f} сум*")
+        if upcoming:
+            lines.append("💳 *Скоро платежи по кредитам:*\n")
+            total = 0
+            for delta, day, name, amount, ptype, pay_date in upcoming:
+                if delta == 0:
+                    prefix = "🔴 СЕГОДНЯ"
+                elif delta == 1:
+                    prefix = "⚠️ ЗАВТРА"
+                else:
+                    prefix = f"📅 Через {delta} дня"
+                lines.append(f"{prefix} — {name}")
+                lines.append(f"   💰 {amount:,.0f} сум ({pay_date.strftime('%d.%m')})")
+                total += amount
+            lines.append(f"\n*Итого по кредитам: {total:,.0f} сум*")
+            savings_tip = _get_savings_tip(total)
+            if savings_tip:
+                lines.append(savings_tip)
 
-        # Совет по досрочному погашению
-        savings_tip = _get_savings_tip(total)
-        if savings_tip:
-            lines.append(f"\n{savings_tip}")
+        if personal:
+            lines.append("\n👥 *Срочные личные долги:*\n")
+            for d in personal:
+                deadline_str = d["deadline"].strftime("%d.%m.%Y") if d["deadline"] else "без срока"
+                days_left = (d["deadline"] - date.today()).days if d["deadline"] else None
+                days_str = f" (осталось {days_left} дн.)" if days_left is not None else ""
+                lines.append(f"{d['priority']} {d['name']} — ${d['amount_usd']:,}{days_str}")
+                lines.append(f"   📅 Срок: {deadline_str}")
 
         bot.send_message(user_id, "\n".join(lines), parse_mode="Markdown")
         _mark_sent(user_id, "credit_reminder")
     except Exception as e:
         print(f"[PROACTIVE] Ошибка кредитного напоминания: {e}")
+
+
+def _get_urgent_personal_debts() -> list:
+    """Возвращает личные долги у которых срок в ближайшие 14 дней или они приоритетные."""
+    today = date.today()
+    urgent = []
+    for d in PERSONAL_DEBTS:
+        if d["deadline"] and (d["deadline"] - today).days <= 14:
+            urgent.append(d)
+        elif d["priority"] in ("⚠️ приоритет",):
+            urgent.append(d)
+    return urgent
 
 
 def _update_overdue_in_sheets():

@@ -170,6 +170,36 @@ class SheetsManager:
                 }},
                 "fields": "userEnteredFormat"
             }},
+            # Строка-разделитель «👥 ДОЛГИ ПЕРЕД ЛЮДЬМИ» — тёмно-серая (индекс 7)
+            {"repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 7, "endRowIndex": 8,
+                           "startColumnIndex": 0, "endColumnIndex": 10},
+                "cell": {"userEnteredFormat": {
+                    "backgroundColor": {"red": 0.25, "green": 0.25, "blue": 0.25},
+                    "textFormat": {"bold": True, "fontSize": 10,
+                                   "foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}}
+                }},
+                "fields": "userEnteredFormat"
+            }},
+            # Строка Сирож ака (🔴 СРОЧНО) — красный фон (индекс 8)
+            {"repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 8, "endRowIndex": 9,
+                           "startColumnIndex": 0, "endColumnIndex": 10},
+                "cell": {"userEnteredFormat": {
+                    "backgroundColor": {"red": 1.0, "green": 0.87, "blue": 0.87},
+                    "textFormat": {"bold": True}
+                }},
+                "fields": "userEnteredFormat"
+            }},
+            # Строка Истам (⚠️ приоритет) — жёлтый фон (индекс 9)
+            {"repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 9, "endRowIndex": 10,
+                           "startColumnIndex": 0, "endColumnIndex": 10},
+                "cell": {"userEnteredFormat": {
+                    "backgroundColor": {"red": 1.0, "green": 0.95, "blue": 0.8}
+                }},
+                "fields": "userEnteredFormat"
+            }},
             # Столбец A (Кредит) — широкий
             {"updateDimensionProperties": {
                 "range": {"sheetId": sheet_id, "dimension": "COLUMNS",
@@ -198,9 +228,9 @@ class SheetsManager:
                 "properties": {"pixelSize": 42},
                 "fields": "pixelSize"
             }},
-            # Границы всей таблицы
+            # Границы всей таблицы (12 строк данных + заголовок)
             {"updateBorders": {
-                "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 8,
+                "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 13,
                            "startColumnIndex": 0, "endColumnIndex": 10},
                 "top": {"style": "SOLID", "width": 1,
                         "color": {"red": 0.6, "green": 0.6, "blue": 0.6}},
@@ -315,7 +345,17 @@ class SheetsManager:
                  "1,900,000→4,000,000", "05.01.2025", "05.12.2025→2027",
                  "активен", "5,600,000 сум (73 дня)", "🔴 КРИТИЧНО до 30.06.2026"],
                 ["Pulinform (рассрочка)", "25,000,000", "22,200,000", "0%", "2,800,000",
-                 "00.00.2026", "10.07.2026+", "активна", "нет", "беспроцентная"]
+                 "00.00.2026", "10.07.2026+", "активна", "нет", "беспроцентная"],
+                ["", "", "", "", "", "", "", "", "", ""],
+                ["👥 ДОЛГИ ПЕРЕД ЛЮДЬМИ", "", "", "", "", "", "", "", "", ""],
+                ["Сирож ака", "600$", "600$", "0%", "разовый",
+                 "-", "10.07.2026", "активен", "🔴 СРОЧНО", "коллега, срок до 10 июля"],
+                ["Истам", "2,287$", "2,287$", "0%", "разовый",
+                 "-", "срочный", "активен", "⚠️ приоритет", "братишка, срочнее Ивана"],
+                ["Иван", "4,920$", "4,920$", "0%", "разовый",
+                 "-", "не срочный", "активен", "нет", "русский друг, не срочный"],
+                ["Илёс ака", "100$", "100$", "0%", "разовый",
+                 "-", "-", "активен", "нет", ""],
             ]
             self.service.spreadsheets().values().update(
                 spreadsheetId=self.sheet_id,
