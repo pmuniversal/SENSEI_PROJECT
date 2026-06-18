@@ -61,29 +61,34 @@ def parse_finance_input(text: str) -> dict | None:
 
 Если сообщение содержит финансовую операцию — верни JSON:
 {{
-  "type": "income|expense|debt_give|debt_take|query_balance|query_report|query_debts",
+  "type": "income|expense|debt_give|debt_take|debt_repay|query_balance|query_report|query_debts",
   "amount": число или null,
   "currency": "UZS|USD|RUB",
   "category": "категория или null",
   "sphere": "pulinform|youtube|services|life|null",
   "payment_method": "наличные|карта|перевод|null",
   "comment": "краткий комментарий",
-  "period": "month|week|today|null"  -- только для query_report
+  "period": "month|week|today|null",
+  "person": "имя человека или null"
 }}
 
 Правила:
 - income: заработал, получил, пришло, доход, выручка
 - expense: потратил, купил, заплатил, расход, трата
-- debt_give: одолжил, дал в долг, дал денег
-- debt_take: взял в долг, занял
-- query_balance: мой баланс, сколько денег, остаток
-- query_report: отчёт, сколько потратил, статистика (period: month/week/today)
-- query_debts: покажи долги, список долгов, мои долги, кому должен, у кого должен, долги, кредиты, покажи кредиты, финансовая ситуация
-- Валюта: к/сум/UZS → UZS; $/$$/доллар → USD; по умолчанию UZS
-- к = тысяча (50к = 50000), млн = миллион
-- Сферы: pulinform=работа/взыскание, youtube=ютуб/видео, services=сайт/клиент, life=быт/личное
+- debt_give: одолжил, дал в долг (ТЫ дал — они будут должны тебе)
+- debt_take: взял в долг, занял (ТЫ взял — ты должен им)
+- debt_repay: отдал долг, вернул долг, погасил (ТЫ вернул СВОЙ долг)
+  ПРИМЕРЫ debt_repay: "отдал 1$ Сирож ака", "вернул Истаму 100$", "отдал Ивану 50$"
+  ВАЖНО: "отдал [сумму] [имя]" = debt_repay, НЕ debt_give!
+- query_balance: мой баланс, сколько денег
+- query_report: отчёт, сколько потратил (period: month/week/today)
+- query_debts: покажи долги, список долгов, кому должен, кредиты, финансовая ситуация
 
-Если НЕ финансовое сообщение — верни: {{"type": "none"}}
+- person: извлеки имя (Сирож ака, Истам, Иван, Илёс ака, Анорбанк, AVO и т.д.)
+- Валюта: сум/UZS/к → UZS; $/доллар → USD; по умолчанию UZS
+- к = тысяча, млн = миллион
+
+Если НЕ финансовое — верни: {{"type": "none"}}
 Верни ТОЛЬКО JSON."""
 
     response = client.chat.completions.create(
@@ -244,7 +249,82 @@ def get_report(user_id, period: str = "month") -> str:
     return "\n".join(lines).replace(",", " ")
 
 
-def get_debts_summary() -> str:
+def save_debt_repayment(user_id, data: dict) -> str:
+    """Сохраняет погашение личного долга и обновляет Google Sheets."""
+    now = str(datetime.now())
+    amount = data.get("amount") or 0
+    currency = data.get("currency", "USD")
+    person = data.get("person") or data.get("comment") or "неизвестно"
+    comment = data.get("comment") or f"погашение долга {person}"
+
+    # Сохраняем в БД как расход (деньги ушли)
+    db.cursor.execute("""
+    INSERT INTO finance (user_id, type, amount, currency, category, sphere, comment, payment_method, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (str(user_id), "debt_repay", amount, currency, "погашение долга", "life", comment, "наличные", now))
+    db.conn.commit()
+
+    # Словарь: имя → текущий остаток в $
+    personal_debt_balances = {
+        "сирож ака": 600,
+        "сирож":     600,
+        "истам":     2287,
+        "иван":      4920,
+        "илёс ака":  100,
+        "илёс":      100,
+    }
+
+    person_lower = person.lower().strip()
+    new_balance = None
+    matched_name = None
+
+    for key, balance in personal_debt_balances.items():
+        if key in person_lower or person_lower in key:
+            # Конвертируем сумму если нужно (упрощённо: 1$ = 12700 сум)
+            if currency == "UZS":
+                repaid_usd = round(amount / 12700, 2)
+            else:
+                repaid_usd = amount
+            new_balance = round(balance - repaid_usd, 2)
+            matched_name = person
+            break
+
+    # Записываем в Google Sheets → История
+    try:
+        from bot.services.sheets import log_payment, sheets_manager, SHEET_CREDITS
+        log_payment(
+            credit_name=person,
+            amount=amount,
+            comment=f"погашение долга",
+            new_balance=new_balance
+        )
+
+        # Обновляем остаток в листе Кредиты и долги если нашли имя
+        if new_balance is not None and matched_name:
+            sheets_manager.update_credit_balance(matched_name, new_balance)
+    except Exception as e:
+        print(f"[FINANCE] Ошибка обновления Sheets: {e}")
+
+    # Форматируем ответ
+    if currency == "USD":
+        amount_str = f"${amount}"
+    else:
+        amount_str = f"{amount:,.0f} сум"
+
+    balance_str = ""
+    if new_balance is not None:
+        balance_str = f"\n📉 Остаток долга {person}: *${new_balance:,.2f}*"
+
+    return (
+        f"✅ *Погашение долга записано*\n\n"
+        f"👤 Кому: {person}\n"
+        f"💵 Сумма: {amount_str}\n"
+        f"📊 Записано в Google Sheets (История + Кредиты и долги)"
+        f"{balance_str}"
+    )
+
+
+# ──────────────────────────────────────────────────
     """Показывает сводку всех кредитов и личных долгов."""
     lines = ["💳 *Мои кредиты и долги:*\n"]
 
@@ -297,6 +377,8 @@ def process_finance(user_id, text: str) -> str | None:
 
     if t in ("income", "expense", "debt_give", "debt_take"):
         return save_transaction(user_id, data)
+    elif t == "debt_repay":
+        return save_debt_repayment(user_id, data)
     elif t == "query_balance":
         return get_balance(user_id)
     elif t == "query_report":
