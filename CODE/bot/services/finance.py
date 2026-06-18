@@ -361,6 +361,53 @@ def save_debt_repayment(user_id, data: dict) -> str:
     return "\n".join(lines)
 
 
+def get_debts_summary() -> str:
+    """Показывает кому ты должен и кто должен тебе — аккуратный список."""
+    lines = []
+
+    # ── Кому ТЫ должен ──────────────────────────────
+    lines.append("💳 *Кому я должен:*\n")
+    lines.append("🏦 Банки:")
+    lines.append("  • Анорбанк №1 — *17 545 179 сум* (42%)")
+    lines.append("  • Анорбанк №2 — *16 240 921 сум* (47%) ⚠️ просрочка")
+    lines.append("  • AVO карта — *23 510 000 сум* (45%+)")
+    lines.append("  • Узумбанк — *22 000 000 сум* (44%) ⚠️ просрочка")
+    lines.append("  • Юрлица (гос.) — *~95 000 000 сум* 🔴 КРИТИЧНО до 30.06")
+    lines.append("  • Pulinform рассрочка — *22 200 000 сум* (0%)")
+    lines.append("")
+    lines.append("👥 Люди:")
+    lines.append("  • Сирож ака — *$600* (до 10.07.2026) 🔴 СРОЧНО")
+    lines.append("  • Истам — *$2 287* ⚠️ приоритет")
+    lines.append("  • Иван — *$4 920* (не срочный)")
+    lines.append("  • Илёс ака — *$100*")
+    lines.append("")
+    lines.append("📊 Итого личных долгов: *$7 907*")
+
+    # ── Кто должен ТЕБЕ ─────────────────────────────
+    lines.append("")
+    lines.append("💰 *Кто должен мне:*\n")
+    try:
+        db.cursor.execute("""
+        SELECT comment, amount, currency, created_at
+        FROM finance WHERE type='debt_give'
+        ORDER BY created_at DESC LIMIT 10
+        """)
+        rows = db.cursor.fetchall()
+        if rows:
+            for comment, amount, currency, created_at in rows:
+                date_str = (created_at or "")[:10]
+                if currency == "USD":
+                    lines.append(f"  • {comment} — *${amount:,.0f}* ({date_str})")
+                else:
+                    lines.append(f"  • {comment} — *{amount:,.0f} сум* ({date_str})")
+        else:
+            lines.append("  Никто не должен (или ещё не записано)")
+    except Exception:
+        lines.append("  Данных нет")
+
+    return "\n".join(lines)
+
+
 # ──────────────────────────────────────────────────
 # Главная функция — обработка финансового текста
 # ──────────────────────────────────────────────────
