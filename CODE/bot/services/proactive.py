@@ -252,12 +252,94 @@ def send_weekly_tracker_report(bot, user_id: str):
         from bot.services.trackers import get_tracker_stats
         stats = get_tracker_stats(user_id, "all")
         if "Нет данных" in stats:
-            return  # Не спамить если нет данных
+            return
         text = f"📈 *Еженедельный отчёт трекеров*\n\n{stats}"
         bot.send_message(user_id, text, parse_mode="Markdown")
         _mark_sent(user_id, "weekly_trackers")
     except Exception as e:
         print(f"[PROACTIVE] Ошибка еженедельного отчёта: {e}")
+
+
+# Расписание кредитных платежей Бекзода
+# Формат: (день_месяца, название, сумма, тип)
+CREDIT_SCHEDULE = [
+    (1,  "Аренда квартиры",          2_700_000, "аренда"),
+    (5,  "Анорбанк №1 (большой)",    2_537_983, "кредит"),
+    (5,  "Кредит юрлица",            1_900_000, "кредит_юрлицо"),
+    (10, "Рассрочка Pulinform",       2_800_000, "рассрочка"),
+    (15, "Анорбанк №2 (малый)",       1_329_616, "кредит"),
+    (21, "AVO карта (мин. платёж)",   2_000_000, "карта"),
+]
+
+
+def _get_upcoming_payments(days_ahead: int = 3) -> list:
+    """Возвращает платежи в ближайшие N дней."""
+    today = date.today()
+    upcoming = []
+    for day, name, amount, ptype in CREDIT_SCHEDULE:
+        # Строим дату платежа в текущем месяце
+        try:
+            pay_date = today.replace(day=day)
+        except ValueError:
+            continue  # Нет такого числа в месяце
+        # Если уже прошло — смотрим следующий месяц
+        if pay_date < today:
+            if today.month == 12:
+                pay_date = pay_date.replace(year=today.year + 1, month=1)
+            else:
+                pay_date = pay_date.replace(month=today.month + 1)
+        delta = (pay_date - today).days
+        if 0 <= delta <= days_ahead:
+            upcoming.append((delta, day, name, amount, ptype, pay_date))
+    return sorted(upcoming)
+
+
+def send_credit_reminder(bot, user_id: str):
+    """Напоминание о предстоящих кредитных платежах (за 3 дня)."""
+    if _already_sent(user_id, "credit_reminder"):
+        return
+    try:
+        upcoming = _get_upcoming_payments(days_ahead=3)
+        if not upcoming:
+            return
+
+        lines = ["💳 *Скоро платежи:*\n"]
+        total = 0
+        for delta, day, name, amount, ptype, pay_date in upcoming:
+            if delta == 0:
+                prefix = "🔴 СЕГОДНЯ"
+            elif delta == 1:
+                prefix = "⚠️ ЗАВТРА"
+            else:
+                prefix = f"📅 Через {delta} дня"
+            lines.append(f"{prefix} — {name}")
+            lines.append(f"   💰 {amount:,.0f} сум ({pay_date.strftime('%d.%m')})")
+            total += amount
+
+        lines.append(f"\n*Итого к оплате: {total:,.0f} сум*")
+
+        # Добавляем совет по экономии
+        from bot.services.finance import get_balance
+        try:
+            balance = get_balance(user_id)
+            if balance and balance.get("balance_sum"):
+                bal = balance["balance_sum"]
+                if bal < total:
+                    shortfall = total - bal
+                    lines.append(f"\n⚡ Не хватает: {shortfall:,.0f} сум")
+                    lines.append("Срочно найди источник или перенеси необязательные траты.")
+                else:
+                    extra = bal - total
+                    lines.append(f"\n✅ После платежей останется: {extra:,.0f} сум")
+                    if extra > 500_000:
+                        lines.append(f"💡 Лишние {extra:,.0f} сум → закинь на тело кредита с высокой ставкой (AVO/Анорбанк)")
+        except Exception:
+            pass
+
+        bot.send_message(user_id, "\n".join(lines), parse_mode="Markdown")
+        _mark_sent(user_id, "credit_reminder")
+    except Exception as e:
+        print(f"[PROACTIVE] Ошибка кредитного напоминания: {e}")
 
 
 # ──────────────────────────────────────────────────
@@ -300,6 +382,10 @@ def proactive_loop(bot):
             # 08:00 — дедлайн-алерт
             elif hour == 8 and minute == 0:
                 send_deadline_alert(bot, owner_id)
+
+            # 10:00 — напоминание о кредитах (если платёж в ближ. 3 дня)
+            elif hour == 10 and minute == 0:
+                send_credit_reminder(bot, owner_id)
 
             # Воскресенье 20:00 — еженедельный отчёт трекеров
             elif hour == 20 and minute == 0 and now.weekday() == 6:
