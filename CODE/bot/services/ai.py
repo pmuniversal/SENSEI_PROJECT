@@ -318,7 +318,7 @@ def ask_ai(user_id, text: str) -> str:
     # Используем Groq если доступен (быстрее и бесплатно), иначе OpenAI
     if groq_client:
         response = groq_client.chat.completions.create(
-            model="llama-3.1-70b-versatile",
+            model="llama-3.3-70b-versatile",
             messages=messages,
             max_tokens=1024,
         )
