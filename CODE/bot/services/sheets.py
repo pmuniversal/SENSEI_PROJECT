@@ -86,6 +86,184 @@ class SheetsManager:
         except Exception as e:
             print(f"[SHEETS] Ошибка создания листов: {e}")
 
+    def _get_sheet_id(self, sheet_name: str) -> Optional[int]:
+        """Возвращает числовой sheetId по имени листа."""
+        try:
+            meta = self.service.spreadsheets().get(spreadsheetId=self.sheet_id).execute()
+            for s in meta.get("sheets", []):
+                if s["properties"]["title"] == sheet_name:
+                    return s["properties"]["sheetId"]
+        except Exception:
+            pass
+        return None
+
+    def _format_credits_sheet(self):
+        """Применяет профессиональное форматирование к листу Кредиты."""
+        sheet_id = self._get_sheet_id("Кредиты")
+        if sheet_id is None:
+            return
+
+        requests = [
+            # Жирный заголовок + фон + белый текст
+            {"repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1,
+                           "startColumnIndex": 0, "endColumnIndex": 10},
+                "cell": {"userEnteredFormat": {
+                    "backgroundColor": {"red": 0.18, "green": 0.34, "blue": 0.6},
+                    "textFormat": {"bold": True, "fontSize": 10,
+                                   "foregroundColor": {"red": 1, "green": 1, "blue": 1}},
+                    "horizontalAlignment": "CENTER",
+                    "verticalAlignment": "MIDDLE",
+                    "wrapStrategy": "WRAP"
+                }},
+                "fields": "userEnteredFormat"
+            }},
+            # Закрепить первую строку
+            {"updateSheetProperties": {
+                "properties": {"sheetId": sheet_id,
+                               "gridProperties": {"frozenRowCount": 1}},
+                "fields": "gridProperties.frozenRowCount"
+            }},
+            # Строка с КРИТИЧНО (строка 6, индекс 5) — красный фон
+            {"repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 5, "endRowIndex": 6,
+                           "startColumnIndex": 0, "endColumnIndex": 10},
+                "cell": {"userEnteredFormat": {
+                    "backgroundColor": {"red": 1.0, "green": 0.87, "blue": 0.87},
+                    "textFormat": {"bold": True}
+                }},
+                "fields": "userEnteredFormat"
+            }},
+            # Строка Анорбанк №2 (просрочка) — жёлтый фон
+            {"repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 2, "endRowIndex": 3,
+                           "startColumnIndex": 0, "endColumnIndex": 10},
+                "cell": {"userEnteredFormat": {
+                    "backgroundColor": {"red": 1.0, "green": 0.95, "blue": 0.8}
+                }},
+                "fields": "userEnteredFormat"
+            }},
+            # Чередующийся фон остальных строк (светло-серый)
+            {"repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": 2,
+                           "startColumnIndex": 0, "endColumnIndex": 10},
+                "cell": {"userEnteredFormat": {
+                    "backgroundColor": {"red": 0.95, "green": 0.95, "blue": 0.95}
+                }},
+                "fields": "userEnteredFormat"
+            }},
+            # Ширина столбцов: А (Кредит) — широкий
+            {"updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "COLUMNS",
+                           "startIndex": 0, "endIndex": 1},
+                "properties": {"pixelSize": 200},
+                "fields": "pixelSize"
+            }},
+            # Столбцы B, C, D, E — средние
+            {"updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "COLUMNS",
+                           "startIndex": 1, "endIndex": 5},
+                "properties": {"pixelSize": 130},
+                "fields": "pixelSize"
+            }},
+            # Столбцы F-J — меньше
+            {"updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "COLUMNS",
+                           "startIndex": 5, "endIndex": 10},
+                "properties": {"pixelSize": 120},
+                "fields": "pixelSize"
+            }},
+            # Высота строки заголовка
+            {"updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "ROWS",
+                           "startIndex": 0, "endIndex": 1},
+                "properties": {"pixelSize": 40},
+                "fields": "pixelSize"
+            }},
+            # Границы таблицы
+            {"updateBorders": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 8,
+                           "startColumnIndex": 0, "endColumnIndex": 10},
+                "top": {"style": "SOLID", "width": 1,
+                        "color": {"red": 0.7, "green": 0.7, "blue": 0.7}},
+                "bottom": {"style": "SOLID", "width": 1,
+                           "color": {"red": 0.7, "green": 0.7, "blue": 0.7}},
+                "left": {"style": "SOLID", "width": 1,
+                         "color": {"red": 0.7, "green": 0.7, "blue": 0.7}},
+                "right": {"style": "SOLID", "width": 1,
+                          "color": {"red": 0.7, "green": 0.7, "blue": 0.7}},
+                "innerHorizontal": {"style": "SOLID", "width": 1,
+                                    "color": {"red": 0.85, "green": 0.85, "blue": 0.85}},
+                "innerVertical": {"style": "SOLID", "width": 1,
+                                  "color": {"red": 0.85, "green": 0.85, "blue": 0.85}}
+            }}
+        ]
+
+        try:
+            self.service.spreadsheets().batchUpdate(
+                spreadsheetId=self.sheet_id,
+                body={"requests": requests}
+            ).execute()
+            print("[SHEETS] Форматирование листа 'Кредиты' применено")
+        except Exception as e:
+            print(f"[SHEETS] Ошибка форматирования: {e}")
+
+    def _format_history_sheet(self):
+        """Применяет форматирование к листу История."""
+        sheet_id = self._get_sheet_id("История")
+        if sheet_id is None:
+            return
+
+        requests = [
+            # Жирный заголовок
+            {"repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1,
+                           "startColumnIndex": 0, "endColumnIndex": 8},
+                "cell": {"userEnteredFormat": {
+                    "backgroundColor": {"red": 0.18, "green": 0.34, "blue": 0.6},
+                    "textFormat": {"bold": True, "fontSize": 10,
+                                   "foregroundColor": {"red": 1, "green": 1, "blue": 1}},
+                    "horizontalAlignment": "CENTER",
+                    "verticalAlignment": "MIDDLE"
+                }},
+                "fields": "userEnteredFormat"
+            }},
+            # Закрепить первую строку
+            {"updateSheetProperties": {
+                "properties": {"sheetId": sheet_id,
+                               "gridProperties": {"frozenRowCount": 1}},
+                "fields": "gridProperties.frozenRowCount"
+            }},
+            # Ширина столбцов
+            {"updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "COLUMNS",
+                           "startIndex": 0, "endIndex": 2},
+                "properties": {"pixelSize": 100},
+                "fields": "pixelSize"
+            }},
+            {"updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "COLUMNS",
+                           "startIndex": 2, "endIndex": 4},
+                "properties": {"pixelSize": 160},
+                "fields": "pixelSize"
+            }},
+            {"updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "COLUMNS",
+                           "startIndex": 4, "endIndex": 8},
+                "properties": {"pixelSize": 130},
+                "fields": "pixelSize"
+            }},
+        ]
+
+        try:
+            self.service.spreadsheets().batchUpdate(
+                spreadsheetId=self.sheet_id,
+                body={"requests": requests}
+            ).execute()
+            print("[SHEETS] Форматирование листа 'История' применено")
+        except Exception as e:
+            print(f"[SHEETS] Ошибка форматирования История: {e}")
+
     def _init_credits_sheet(self):
         """Инициализирует лист \"Кредиты\" с заголовками и данными."""
         if not self.service or not self.sheet_id:
@@ -257,6 +435,8 @@ def init_sheets():
         sheets_manager._ensure_sheets()
         sheets_manager._init_credits_sheet()
         sheets_manager._init_history_sheet()
+        sheets_manager._format_credits_sheet()
+        sheets_manager._format_history_sheet()
         print("[SHEETS] Полностью инициализирована")
     else:
         print("[SHEETS] Сервис недоступен — функция отключена")
