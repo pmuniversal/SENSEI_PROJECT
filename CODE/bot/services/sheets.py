@@ -2,26 +2,28 @@
 sheets.py — Интеграция с Google Sheets для ведения финансов
 ===========================================================
 
-Две таблицы:
-1. "Кредиты" — основные условия, остатки, ставки
+Два листа:
+1. "Кредиты и долги" — сводка всех кредитов и долгов (остатки, ставки, просрочки)
 2. "История" — каждый платёж с датой, суммой, комментарием
 
 Бот автоматически обновляет таблицы при упоминании платежей.
 """
 
 import os
-import json
 from datetime import datetime
 from typing import Optional
 
 try:
     from google.oauth2.service_account import Credentials
-    from google.auth.transport.requests import Request
     import googleapiclient.discovery
     SHEETS_AVAILABLE = True
 except ImportError:
     SHEETS_AVAILABLE = False
     print("[SHEETS] google-auth-oauthlib не установлен")
+
+# Константы имён листов
+SHEET_CREDITS = "Кредиты и долги"
+SHEET_HISTORY = "История"
 
 
 class SheetsManager:
@@ -52,28 +54,55 @@ class SheetsManager:
         except Exception as e:
             print(f"[SHEETS] Ошибка инициализации: {e}")
 
+    def _get_all_sheets(self) -> dict:
+        """Возвращает словарь {название: sheetId} всех листов."""
+        try:
+            meta = self.service.spreadsheets().get(spreadsheetId=self.sheet_id).execute()
+            return {s["properties"]["title"]: s["properties"]["sheetId"]
+                    for s in meta.get("sheets", [])}
+        except Exception:
+            return {}
+
+    def _get_sheet_id(self, sheet_name: str) -> Optional[int]:
+        """Возвращает числовой sheetId по имени листа."""
+        sheets = self._get_all_sheets()
+        return sheets.get(sheet_name)
+
     def _ensure_sheets(self):
-        """Создаёт листы если их нет."""
+        """Создаёт или переименовывает листы до нужных имён."""
         if not self.service or not self.sheet_id:
             return
 
         try:
-            # Проверяем какие листы есть
-            sheet_meta = self.service.spreadsheets().get(spreadsheetId=self.sheet_id).execute()
-            sheet_names = [s["properties"]["title"] for s in sheet_meta.get("sheets", [])]
-
-            # Создаём листы если их нет
+            sheets = self._get_all_sheets()
             requests = []
-            if "Кредиты" not in sheet_names:
+
+            # Переименовываем старый лист «Кредиты» если он есть
+            if "Кредиты" in sheets and SHEET_CREDITS not in sheets:
                 requests.append({
-                    "addSheet": {
-                        "properties": {"title": "Кредиты", "gridProperties": {"rowCount": 100}}
+                    "updateSheetProperties": {
+                        "properties": {
+                            "sheetId": sheets["Кредиты"],
+                            "title": SHEET_CREDITS
+                        },
+                        "fields": "title"
                     }
                 })
-            if "История" not in sheet_names:
+                print(f"[SHEETS] Переименован лист 'Кредиты' → '{SHEET_CREDITS}'")
+
+            # Создаём листы если их нет
+            if SHEET_CREDITS not in sheets and "Кредиты" not in sheets:
                 requests.append({
                     "addSheet": {
-                        "properties": {"title": "История", "gridProperties": {"rowCount": 1000}}
+                        "properties": {"title": SHEET_CREDITS,
+                                       "gridProperties": {"rowCount": 100}}
+                    }
+                })
+            if SHEET_HISTORY not in sheets:
+                requests.append({
+                    "addSheet": {
+                        "properties": {"title": SHEET_HISTORY,
+                                       "gridProperties": {"rowCount": 1000}}
                     }
                 })
 
@@ -82,36 +111,25 @@ class SheetsManager:
                     spreadsheetId=self.sheet_id,
                     body={"requests": requests}
                 ).execute()
-                print("[SHEETS] Листы созданы")
+                print("[SHEETS] Листы готовы")
         except Exception as e:
-            print(f"[SHEETS] Ошибка создания листов: {e}")
-
-    def _get_sheet_id(self, sheet_name: str) -> Optional[int]:
-        """Возвращает числовой sheetId по имени листа."""
-        try:
-            meta = self.service.spreadsheets().get(spreadsheetId=self.sheet_id).execute()
-            for s in meta.get("sheets", []):
-                if s["properties"]["title"] == sheet_name:
-                    return s["properties"]["sheetId"]
-        except Exception:
-            pass
-        return None
+            print(f"[SHEETS] Ошибка подготовки листов: {e}")
 
     def _format_credits_sheet(self):
-        """Применяет профессиональное форматирование к листу Кредиты."""
-        sheet_id = self._get_sheet_id("Кредиты")
+        """Применяет профессиональное форматирование к листу Кредиты и долги."""
+        sheet_id = self._get_sheet_id(SHEET_CREDITS)
         if sheet_id is None:
             return
 
         requests = [
-            # Жирный заголовок + фон + белый текст
+            # Синяя шапка с белым жирным текстом
             {"repeatCell": {
                 "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1,
                            "startColumnIndex": 0, "endColumnIndex": 10},
                 "cell": {"userEnteredFormat": {
                     "backgroundColor": {"red": 0.18, "green": 0.34, "blue": 0.6},
                     "textFormat": {"bold": True, "fontSize": 10,
-                                   "foregroundColor": {"red": 1, "green": 1, "blue": 1}},
+                                   "foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}},
                     "horizontalAlignment": "CENTER",
                     "verticalAlignment": "MIDDLE",
                     "wrapStrategy": "WRAP"
@@ -124,7 +142,7 @@ class SheetsManager:
                                "gridProperties": {"frozenRowCount": 1}},
                 "fields": "gridProperties.frozenRowCount"
             }},
-            # Строка с КРИТИЧНО (строка 6, индекс 5) — красный фон
+            # Строка Юрлица (КРИТИЧНО) — красный фон, строка 6 (индекс 5)
             {"repeatCell": {
                 "range": {"sheetId": sheet_id, "startRowIndex": 5, "endRowIndex": 6,
                            "startColumnIndex": 0, "endColumnIndex": 10},
@@ -134,7 +152,7 @@ class SheetsManager:
                 }},
                 "fields": "userEnteredFormat"
             }},
-            # Строка Анорбанк №2 (просрочка) — жёлтый фон
+            # Строка Анорбанк №2 (просрочка) — жёлтый фон, строка 3 (индекс 2)
             {"repeatCell": {
                 "range": {"sheetId": sheet_id, "startRowIndex": 2, "endRowIndex": 3,
                            "startColumnIndex": 0, "endColumnIndex": 10},
@@ -143,59 +161,59 @@ class SheetsManager:
                 }},
                 "fields": "userEnteredFormat"
             }},
-            # Чередующийся фон остальных строк (светло-серый)
+            # Лёгкий серый фон для Анорбанк №1
             {"repeatCell": {
                 "range": {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": 2,
                            "startColumnIndex": 0, "endColumnIndex": 10},
                 "cell": {"userEnteredFormat": {
-                    "backgroundColor": {"red": 0.95, "green": 0.95, "blue": 0.95}
+                    "backgroundColor": {"red": 0.95, "green": 0.95, "blue": 0.97}
                 }},
                 "fields": "userEnteredFormat"
             }},
-            # Ширина столбцов: А (Кредит) — широкий
+            # Столбец A (Кредит) — широкий
             {"updateDimensionProperties": {
                 "range": {"sheetId": sheet_id, "dimension": "COLUMNS",
                            "startIndex": 0, "endIndex": 1},
-                "properties": {"pixelSize": 200},
+                "properties": {"pixelSize": 210},
                 "fields": "pixelSize"
             }},
-            # Столбцы B, C, D, E — средние
+            # Столбцы B–E
             {"updateDimensionProperties": {
                 "range": {"sheetId": sheet_id, "dimension": "COLUMNS",
                            "startIndex": 1, "endIndex": 5},
                 "properties": {"pixelSize": 130},
                 "fields": "pixelSize"
             }},
-            # Столбцы F-J — меньше
+            # Столбцы F–J
             {"updateDimensionProperties": {
                 "range": {"sheetId": sheet_id, "dimension": "COLUMNS",
                            "startIndex": 5, "endIndex": 10},
-                "properties": {"pixelSize": 120},
+                "properties": {"pixelSize": 115},
                 "fields": "pixelSize"
             }},
             # Высота строки заголовка
             {"updateDimensionProperties": {
                 "range": {"sheetId": sheet_id, "dimension": "ROWS",
                            "startIndex": 0, "endIndex": 1},
-                "properties": {"pixelSize": 40},
+                "properties": {"pixelSize": 42},
                 "fields": "pixelSize"
             }},
-            # Границы таблицы
+            # Границы всей таблицы
             {"updateBorders": {
                 "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 8,
                            "startColumnIndex": 0, "endColumnIndex": 10},
                 "top": {"style": "SOLID", "width": 1,
-                        "color": {"red": 0.7, "green": 0.7, "blue": 0.7}},
+                        "color": {"red": 0.6, "green": 0.6, "blue": 0.6}},
                 "bottom": {"style": "SOLID", "width": 1,
-                           "color": {"red": 0.7, "green": 0.7, "blue": 0.7}},
+                           "color": {"red": 0.6, "green": 0.6, "blue": 0.6}},
                 "left": {"style": "SOLID", "width": 1,
-                         "color": {"red": 0.7, "green": 0.7, "blue": 0.7}},
+                         "color": {"red": 0.6, "green": 0.6, "blue": 0.6}},
                 "right": {"style": "SOLID", "width": 1,
-                          "color": {"red": 0.7, "green": 0.7, "blue": 0.7}},
+                          "color": {"red": 0.6, "green": 0.6, "blue": 0.6}},
                 "innerHorizontal": {"style": "SOLID", "width": 1,
-                                    "color": {"red": 0.85, "green": 0.85, "blue": 0.85}},
+                                    "color": {"red": 0.82, "green": 0.82, "blue": 0.82}},
                 "innerVertical": {"style": "SOLID", "width": 1,
-                                  "color": {"red": 0.85, "green": 0.85, "blue": 0.85}}
+                                  "color": {"red": 0.82, "green": 0.82, "blue": 0.82}}
             }}
         ]
 
@@ -204,25 +222,25 @@ class SheetsManager:
                 spreadsheetId=self.sheet_id,
                 body={"requests": requests}
             ).execute()
-            print("[SHEETS] Форматирование листа 'Кредиты' применено")
+            print(f"[SHEETS] Форматирование листа '{SHEET_CREDITS}' применено")
         except Exception as e:
             print(f"[SHEETS] Ошибка форматирования: {e}")
 
     def _format_history_sheet(self):
         """Применяет форматирование к листу История."""
-        sheet_id = self._get_sheet_id("История")
+        sheet_id = self._get_sheet_id(SHEET_HISTORY)
         if sheet_id is None:
             return
 
         requests = [
-            # Жирный заголовок
+            # Синяя шапка
             {"repeatCell": {
                 "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1,
                            "startColumnIndex": 0, "endColumnIndex": 8},
                 "cell": {"userEnteredFormat": {
                     "backgroundColor": {"red": 0.18, "green": 0.34, "blue": 0.6},
                     "textFormat": {"bold": True, "fontSize": 10,
-                                   "foregroundColor": {"red": 1, "green": 1, "blue": 1}},
+                                   "foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}},
                     "horizontalAlignment": "CENTER",
                     "verticalAlignment": "MIDDLE"
                 }},
@@ -234,23 +252,32 @@ class SheetsManager:
                                "gridProperties": {"frozenRowCount": 1}},
                 "fields": "gridProperties.frozenRowCount"
             }},
-            # Ширина столбцов
+            # Дата + Время — узкие
             {"updateDimensionProperties": {
                 "range": {"sheetId": sheet_id, "dimension": "COLUMNS",
                            "startIndex": 0, "endIndex": 2},
-                "properties": {"pixelSize": 100},
+                "properties": {"pixelSize": 95},
                 "fields": "pixelSize"
             }},
+            # Кредит + Тип — средние
             {"updateDimensionProperties": {
                 "range": {"sheetId": sheet_id, "dimension": "COLUMNS",
                            "startIndex": 2, "endIndex": 4},
-                "properties": {"pixelSize": 160},
+                "properties": {"pixelSize": 170},
                 "fields": "pixelSize"
             }},
+            # Сумма + Остаток + Комментарий + Статус
             {"updateDimensionProperties": {
                 "range": {"sheetId": sheet_id, "dimension": "COLUMNS",
                            "startIndex": 4, "endIndex": 8},
                 "properties": {"pixelSize": 130},
+                "fields": "pixelSize"
+            }},
+            # Высота заголовка
+            {"updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "ROWS",
+                           "startIndex": 0, "endIndex": 1},
+                "properties": {"pixelSize": 42},
                 "fields": "pixelSize"
             }},
         ]
@@ -260,23 +287,21 @@ class SheetsManager:
                 spreadsheetId=self.sheet_id,
                 body={"requests": requests}
             ).execute()
-            print("[SHEETS] Форматирование листа 'История' применено")
+            print(f"[SHEETS] Форматирование листа '{SHEET_HISTORY}' применено")
         except Exception as e:
             print(f"[SHEETS] Ошибка форматирования История: {e}")
 
     def _init_credits_sheet(self):
-        """Инициализирует лист \"Кредиты\" с заголовками и данными."""
+        """Инициализирует лист Кредиты и долги с заголовками и данными."""
         if not self.service or not self.sheet_id:
             return
 
         try:
-            # Заголовки
-            headers = [
-                ["Кредит", "Основной долг", "Остаток", "Ставка", "Ежемес. платёж",
-                 "Дата начала", "Дата конца", "Статус", "Просрочка", "Примечание"]
-            ]
-
-            # Данные кредитов
+            headers = [[
+                "Кредит / Долг", "Основной долг", "Остаток", "Ставка",
+                "Ежемес. платёж", "Дата начала", "Дата конца",
+                "Статус", "Просрочка", "Примечание"
+            ]]
             credits = [
                 ["Анорбанк №1", "50,000,000", "17,545,179", "42%", "2,537,983",
                  "01.03.2024", "04.02.2027", "активен", "нет", ""],
@@ -286,57 +311,43 @@ class SheetsManager:
                  "-", "-", "активна", "нет", "весь лимит использован"],
                 ["Узумбанк микрозайм", "25,000,000", "22,000,000", "44%", "переменный",
                  "-", "-", "активен", "900,000 сум", "блокирует доступ к лимиту"],
-                ["Юрлица (государственный)", "100,000,000", "~95,000,000", "23%/34.5%", "1,900,000→4,000,000",
-                 "05.01.2025", "05.12.2025→2027", "активен", "5,600,000 сум (73 дня)", "🔴 КРИТИЧНО до 30.06.2026"],
+                ["Юрлица (государственный)", "100,000,000", "~95,000,000", "23%/34.5%",
+                 "1,900,000→4,000,000", "05.01.2025", "05.12.2025→2027",
+                 "активен", "5,600,000 сум (73 дня)", "🔴 КРИТИЧНО до 30.06.2026"],
                 ["Pulinform (рассрочка)", "25,000,000", "22,200,000", "0%", "2,800,000",
                  "00.00.2026", "10.07.2026+", "активна", "нет", "беспроцентная"]
             ]
-
-            # Пишем в таблицу
-            body = {
-                "values": headers + credits
-            }
             self.service.spreadsheets().values().update(
                 spreadsheetId=self.sheet_id,
-                range="Кредиты!A1",
+                range=f"{SHEET_CREDITS}!A1",
                 valueInputOption="RAW",
-                body=body
+                body={"values": headers + credits}
             ).execute()
-            print("[SHEETS] Лист 'Кредиты' инициализирован")
+            print(f"[SHEETS] Лист '{SHEET_CREDITS}' инициализирован")
         except Exception as e:
-            print(f"[SHEETS] Ошибка инициализации листа Кредиты: {e}")
+            print(f"[SHEETS] Ошибка инициализации листа {SHEET_CREDITS}: {e}")
 
     def _init_history_sheet(self):
-        """Инициализирует лист \"История\" с заголовками."""
+        """Инициализирует лист История с заголовками."""
         if not self.service or not self.sheet_id:
             return
 
         try:
-            headers = [
-                ["Дата", "Время", "Кредит", "Тип", "Сумма (сум)", "Остаток", "Комментарий", "Статус"]
-            ]
-            body = {"values": headers}
+            headers = [["Дата", "Время", "Кредит / Долг", "Тип",
+                        "Сумма (сум)", "Остаток", "Комментарий", "Статус"]]
             self.service.spreadsheets().values().update(
                 spreadsheetId=self.sheet_id,
-                range="История!A1",
+                range=f"{SHEET_HISTORY}!A1",
                 valueInputOption="RAW",
-                body=body
+                body={"values": headers}
             ).execute()
-            print("[SHEETS] Лист 'История' инициализирован")
+            print(f"[SHEETS] Лист '{SHEET_HISTORY}' инициализирован")
         except Exception as e:
             print(f"[SHEETS] Ошибка инициализации листа История: {e}")
 
     def add_payment(self, credit_name: str, payment_type: str, amount: float,
-                   new_balance: Optional[float] = None, comment: str = ""):
-        """Добавляет запись о платеже в лист История.
-
-        Args:
-            credit_name: Название кредита (например \"Анорбанк №1\")
-            payment_type: Тип платежа (оплата/досрочное погашение/учёт просрочки)
-            amount: Сумма платежа
-            new_balance: Новый остаток по кредиту
-            comment: Дополнительный комментарий
-        """
+                    new_balance: Optional[float] = None, comment: str = ""):
+        """Добавляет запись о платеже в лист История."""
         if not self.service or not self.sheet_id:
             return
 
@@ -352,46 +363,36 @@ class SheetsManager:
                 comment,
                 "✅"
             ]
-
-            # Добавляем строку в конец
             self.service.spreadsheets().values().append(
                 spreadsheetId=self.sheet_id,
-                range="История!A2",
+                range=f"{SHEET_HISTORY}!A2",
                 valueInputOption="RAW",
                 body={"values": [row]}
             ).execute()
-            print(f"[SHEETS] Добавлена запись: {credit_name} {amount} сум")
+            print(f"[SHEETS] Запись: {credit_name} {amount:,.0f} сум")
         except Exception as e:
             print(f"[SHEETS] Ошибка добавления платежа: {e}")
 
     def update_credit_balance(self, credit_name: str, new_balance: float):
-        """Обновляет остаток по кредиту в листе Кредиты.
-
-        Args:
-            credit_name: Название кредита
-            new_balance: Новый остаток
-        """
+        """Обновляет остаток по кредиту в листе Кредиты и долги."""
         if not self.service or not self.sheet_id:
             return
 
         try:
-            # Находим строку по названию кредита
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=self.sheet_id,
-                range="Кредиты!A:A"
+                range=f"{SHEET_CREDITS}!A:A"
             ).execute()
-
             rows = result.get("values", [])
             row_index = None
             for i, row in enumerate(rows):
                 if row and row[0] == credit_name:
-                    row_index = i + 1  # +1 для Google Sheets (1-indexed)
+                    row_index = i + 1  # Google Sheets: 1-indexed
                     break
-
             if row_index:
                 self.service.spreadsheets().values().update(
                     spreadsheetId=self.sheet_id,
-                    range=f"Кредиты!C{row_index}",
+                    range=f"{SHEET_CREDITS}!C{row_index}",
                     valueInputOption="RAW",
                     body={"values": [[f"{new_balance:,.0f}"]]}
                 ).execute()
@@ -407,15 +408,13 @@ class SheetsManager:
         try:
             result = self.service.spreadsheets().values().get(
                 spreadsheetId=self.sheet_id,
-                range="Кредиты!A:C"
+                range=f"{SHEET_CREDITS}!A:C"
             ).execute()
-
             rows = result.get("values", [])
             for row in rows:
                 if row and len(row) >= 3 and row[0] == credit_name:
                     try:
-                        balance_str = row[2].replace(",", "")
-                        return float(balance_str)
+                        return float(row[2].replace(",", ""))
                     except ValueError:
                         return None
             return None
@@ -424,7 +423,9 @@ class SheetsManager:
             return None
 
 
+# ──────────────────────────────────────────────────
 # Глобальный экземпляр
+# ──────────────────────────────────────────────────
 sheets_manager = SheetsManager()
 
 
@@ -442,7 +443,8 @@ def init_sheets():
         print("[SHEETS] Сервис недоступен — функция отключена")
 
 
-def log_payment(credit_name: str, amount: float, comment: str = "", new_balance: Optional[float] = None):
+def log_payment(credit_name: str, amount: float, comment: str = "",
+                new_balance: Optional[float] = None):
     """Логирует платёж в Google Sheets."""
     if sheets_manager.service:
         sheets_manager.add_payment(
