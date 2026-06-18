@@ -208,7 +208,7 @@ def ask_ai(user_id, text: str) -> str:
     messages.extend(load_memory(user_id))
 
     response = client.chat.completions.create(
-        model="gpt-4.1-mini",
+        model="gpt-4.1",
         messages=messages,
     )
 

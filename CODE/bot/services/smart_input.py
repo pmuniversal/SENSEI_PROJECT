@@ -52,11 +52,16 @@ def classify_message(text: str) -> dict:
 Если это НАПОМИНАНИЕ (содержит слова: напомни, напоминание, remind, через X часов/дней, в такое-то время, N числа):
 {{"type": "reminder", "sphere": "youtube|pulinform|services|life|null", "remind_time": "YYYY-MM-DD HH:MM", "remind_text": "о чём напомнить"}}
 
-Если это ЗАПРОС ЗАДАЧ (что у меня по..., покажи задачи, мои задачи):
+Если это ЗАПРОС ЗАДАЧ (что у меня по..., покажи задачи, мои задачи по сфере):
 {{"type": "query", "query_sphere": "youtube|pulinform|services|life|all"}}
 
 Если это ОБЫЧНЫЙ РАЗГОВОР/ВОПРОС (всё остальное):
 {{"type": "chat"}}
+
+ВАЖНО — следующие запросы это НЕ задачи и НЕ query, верни {{"type": "chat"}}:
+- всё про долги, кредиты, деньги (покажи долги, список кредитов, финансы, баланс, расходы)
+- всё про сон, вес, привычки, дофамин (трекеры)
+- все вопросы и разговоры которые не про задачи/напоминания
 
 Правила определения сферы:
 - pulinform: работа, взыскание, коллектор, Pulinform
@@ -68,7 +73,7 @@ def classify_message(text: str) -> dict:
 Верни ТОЛЬКО JSON, без комментариев и markdown."""
 
     response = client.chat.completions.create(
-        model="gpt-4.1-mini",
+        model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": text},
