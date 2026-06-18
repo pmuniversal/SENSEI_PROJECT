@@ -362,7 +362,7 @@ def save_debt_repayment(user_id, data: dict) -> str:
 
 
 def get_debts_summary() -> str:
-    """Показывает кому ты должен и кто должен тебе — аккуратный список."""
+    """Показывает кому ты должен и кто должен тебе — точный список."""
     lines = []
 
     # ── Кому ТЫ должен ──────────────────────────────
@@ -375,35 +375,23 @@ def get_debts_summary() -> str:
     lines.append("  • Юрлица (гос.) — *~95 000 000 сум* 🔴 КРИТИЧНО до 30.06")
     lines.append("  • Pulinform рассрочка — *22 200 000 сум* (0%)")
     lines.append("")
-    lines.append("👥 Люди:")
+    lines.append("👥 Люди (я должен им):")
     lines.append("  • Сирож ака — *$600* (до 10.07.2026) 🔴 СРОЧНО")
+    lines.append("  • Навруз — *$1 600* ⚠️ срочный")
     lines.append("  • Истам — *$2 287* ⚠️ приоритет")
     lines.append("  • Иван — *$4 920* (не срочный)")
     lines.append("  • Илёс ака — *$100*")
     lines.append("")
-    lines.append("📊 Итого личных долгов: *$7 907*")
+    lines.append("📊 Итого личных долгов: *$9 507*")
 
     # ── Кто должен ТЕБЕ ─────────────────────────────
     lines.append("")
     lines.append("💰 *Кто должен мне:*\n")
-    try:
-        db.cursor.execute("""
-        SELECT comment, amount, currency, created_at
-        FROM finance WHERE type='debt_give'
-        ORDER BY created_at DESC LIMIT 10
-        """)
-        rows = db.cursor.fetchall()
-        if rows:
-            for comment, amount, currency, created_at in rows:
-                date_str = (created_at or "")[:10]
-                if currency == "USD":
-                    lines.append(f"  • {comment} — *${amount:,.0f}* ({date_str})")
-                else:
-                    lines.append(f"  • {comment} — *{amount:,.0f} сум* ({date_str})")
-        else:
-            lines.append("  Никто не должен (или ещё не записано)")
-    except Exception:
-        lines.append("  Данных нет")
+    lines.append("  • Навруз — *$1 600*")
+    lines.append("  • Умар — *$200*")
+    lines.append("  • Лазиз (брат) — *$300*")
+    lines.append("")
+    lines.append("📊 Итого должны мне: *$2 100*")
 
     return "\n".join(lines)
 
