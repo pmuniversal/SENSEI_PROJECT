@@ -315,13 +315,27 @@ def ask_ai(user_id, text: str) -> str:
     ]
     messages.extend(load_memory(user_id))
 
-    # Используем Groq если доступен (быстрее и бесплатно), иначе OpenAI
+    # Используем Groq если доступен, иначе OpenAI
+    # Groq бесплатный план: 6000 TPM для 70b, 14400 TPM для 8b
     if groq_client:
-        response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=messages,
-            max_tokens=1024,
-        )
+        # Считаем примерный размер запроса
+        total_chars = sum(len(str(m)) for m in messages)
+        # Если запрос большой — используем быструю 8b модель
+        # Если маленький — используем умную 70b
+        groq_model = "llama-3.1-8b-instant" if total_chars > 8000 else "llama-3.3-70b-versatile"
+        try:
+            response = groq_client.chat.completions.create(
+                model=groq_model,
+                messages=messages,
+                max_tokens=1024,
+            )
+        except Exception as groq_err:
+            # Если Groq упал — fallback на OpenAI
+            print(f"[AI] Groq ошибка ({groq_err}), переключаюсь на OpenAI")
+            response = client.chat.completions.create(
+                model="gpt-4.1",
+                messages=messages,
+            )
     else:
         response = client.chat.completions.create(
             model="gpt-4.1",
