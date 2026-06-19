@@ -274,6 +274,7 @@ CREDIT_SCHEDULE = [
 # Долги перед людьми — проверяются отдельно по датам
 PERSONAL_DEBTS = [
     {"name": "Сирож ака",  "amount_usd": 600,   "deadline": date(2026, 7, 10), "priority": "🔴 СРОЧНО"},
+    {"name": "Навруз",     "amount_usd": 1600,  "deadline": None,              "priority": "⚠️ приоритет"},
     {"name": "Истам",      "amount_usd": 2287,  "deadline": None,              "priority": "⚠️ приоритет"},
     {"name": "Иван",       "amount_usd": 4920,  "deadline": None,              "priority": "нет"},
     {"name": "Илёс ака",   "amount_usd": 100,   "deadline": None,              "priority": "нет"},

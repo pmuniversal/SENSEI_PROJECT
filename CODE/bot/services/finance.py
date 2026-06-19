@@ -61,7 +61,7 @@ def parse_finance_input(text: str) -> dict | None:
 
 Если сообщение содержит финансовую операцию — верни JSON:
 {{
-  "type": "income|expense|debt_give|debt_take|debt_repay|query_balance|query_report|query_debts",
+  "type": "income|expense|debt_give|debt_take|debt_repay|query_balance|query_report|query_debts|update_debt",
   "amount": число или null,
   "currency": "UZS|USD|RUB",
   "category": "категория или null",
@@ -83,8 +83,12 @@ def parse_finance_input(text: str) -> dict | None:
 - query_balance: мой баланс, сколько денег
 - query_report: отчёт, сколько потратил (period: month/week/today)
 - query_debts: покажи долги, список долгов, кому должен, кредиты, финансовая ситуация
+- update_debt: изменить/исправить СУММУ существующего долга или кредита
+  ПРИМЕРЫ update_debt: "измени долг Pulinform на 25 млн", "долг Анорбанк №1 теперь 17 млн",
+  "обнови кредит Узумбанк до 20 млн", "исправь долг Истаму на 2000$"
+  Для update_debt ОБЯЗАТЕЛЬНО: person = название долга/кредита, amount = новая сумма
 
-- person: извлеки имя (Сирож ака, Истам, Иван, Илёс ака, Анорбанк, AVO и т.д.)
+- person: извлеки имя (Сирож ака, Истам, Иван, Илёс ака, Анорбанк, AVO, Pulinform, Узумбанк и т.д.)
 - Валюта: сум/UZS/к → UZS; $/доллар → USD; по умолчанию UZS
 - к = тысяча, млн = миллион
 
@@ -162,10 +166,11 @@ def save_transaction(user_id, data: dict) -> str:
 # Запросы и отчёты
 # ──────────────────────────────────────────────────
 def get_balance(user_id) -> str:
-    """Баланс: доходы - расходы."""
+    """Баланс: доходы - расходы. Погашения долгов (debt_repay) и выданные
+    в долг (debt_give) считаются как отток наличных."""
     db.cursor.execute("""
     SELECT type, currency, SUM(amount) FROM finance
-    WHERE user_id=? AND type IN ('income','expense')
+    WHERE user_id=? AND type IN ('income','expense','debt_repay','debt_give')
     GROUP BY type, currency
     """, (str(user_id),))
     rows = db.cursor.fetchall()
@@ -177,7 +182,11 @@ def get_balance(user_id) -> str:
     for t, curr, s in rows:
         if curr not in totals:
             totals[curr] = {"income": 0, "expense": 0}
-        totals[curr][t] = totals[curr].get(t, 0) + (s or 0)
+        # income увеличивает наличные; expense/debt_repay/debt_give — уменьшают
+        if t == "income":
+            totals[curr]["income"] += (s or 0)
+        else:
+            totals[curr]["expense"] += (s or 0)
 
     lines = ["📊 *Баланс:*\n"]
     for curr, vals in totals.items():
@@ -264,42 +273,20 @@ def save_debt_repayment(user_id, data: dict) -> str:
     """, (str(user_id), "debt_repay", amount, currency, "погашение долга", "life", comment, "наличные", now))
     db.conn.commit()
 
-    # Словарь: имя → текущий остаток в $
-    personal_debt_balances = {
-        "сирож ака": 600,
-        "сирож":     600,
-        "истам":     2287,
-        "иван":      4920,
-        "илёс ака":  100,
-        "илёс":      100,
-    }
+    # Уменьшаем долг в БД (единый источник правды)
+    from bot.services.debts import reduce_debt
+    new_balance = reduce_debt(person, amount, currency)
+    matched_name = person if new_balance is not None else None
 
-    person_lower = person.lower().strip()
-    new_balance = None
-    matched_name = None
-
-    for key, balance in personal_debt_balances.items():
-        if key in person_lower or person_lower in key:
-            # Конвертируем сумму если нужно (упрощённо: 1$ = 12700 сум)
-            if currency == "UZS":
-                repaid_usd = round(amount / 12700, 2)
-            else:
-                repaid_usd = amount
-            new_balance = round(balance - repaid_usd, 2)
-            matched_name = person
-            break
-
-    # Записываем в Google Sheets → История
+    # Записываем в Google Sheets → История (если подключено)
     try:
-        from bot.services.sheets import log_payment, sheets_manager, SHEET_CREDITS
+        from bot.services.sheets import log_payment, sheets_manager
         log_payment(
             credit_name=person,
             amount=amount,
-            comment=f"погашение долга",
+            comment="погашение долга",
             new_balance=new_balance
         )
-
-        # Обновляем остаток в листе Кредиты и долги если нашли имя
         if new_balance is not None and matched_name:
             sheets_manager.update_credit_balance(matched_name, new_balance)
     except Exception as e:
@@ -325,75 +312,12 @@ def save_debt_repayment(user_id, data: dict) -> str:
 
 
 # ──────────────────────────────────────────────────
-    """Показывает сводку всех кредитов и личных долгов."""
-    lines = ["💳 *Мои кредиты и долги:*\n"]
-
-    # Банковские кредиты
-    lines.append("🏦 *Банки:*")
-    bank_debts = [
-        ("Анорбанк №1",             "17,545,179 сум", "42%", "04.02.2027", ""),
-        ("Анорбанк №2",             "16,240,921 сум", "47%", "14.10.2027", "⚠️ просрочка"),
-        ("AVO карта",               "23,510,000 сум", "45%+", "-",         "весь лимит"),
-        ("Узумбанк микрозайм",      "22,000,000 сум", "44%", "-",          "⚠️ просрочка"),
-        ("Юрлица (гос.)",           "~95,000,000 сум","23%", "2027",       "🔴 КРИТИЧНО"),
-        ("Pulinform рассрочка",     "25,000,000 сум", "0%",  "10.07.2026+","беспроц."),
-    ]
-    total_bank = 0
-    for name, balance, rate, until, note in bank_debts:
-        note_str = f" — {note}" if note else ""
-        lines.append(f"  • {name}: *{balance}* ({rate}){note_str}")
-
-    lines.append("")
-    lines.append("👥 *Личные долги (людям):*")
-    personal_debts = [
-        ("Сирож ака", "$600",   "до 10.07.2026", "🔴 СРОЧНО"),
-        ("Истам",     "$2,287", "срочный",        "⚠️ приоритет"),
-        ("Иван",      "$4,920", "не срочный",     ""),
-        ("Илёс ака",  "$100",   "-",              ""),
-    ]
-    total_usd = 600 + 2287 + 4920 + 100
-    for name, amount, deadline, note in personal_debts:
-        note_str = f" {note}" if note else ""
-        lines.append(f"  • {name}: *{amount}* ({deadline}){note_str}")
-
-    lines.append(f"\n💰 *Итого личных долгов: ${total_usd:,}*")
-    lines.append("\n📊 Полная таблица → Google Sheets «Кредиты и долги»")
-    return "\n".join(lines)
-
-
+# Сводка долгов (кому должен / кто должен)
+# ──────────────────────────────────────────────────
 def get_debts_summary() -> str:
-    """Показывает кому ты должен и кто должен тебе — точный список."""
-    lines = []
-
-    # ── Кому ТЫ должен ──────────────────────────────
-    lines.append("💳 *Кому я должен:*\n")
-    lines.append("🏦 Банки:")
-    lines.append("  • Анорбанк №1 — *17 545 179 сум* (42%)")
-    lines.append("  • Анорбанк №2 — *16 240 921 сум* (47%) ⚠️ просрочка")
-    lines.append("  • AVO карта — *23 510 000 сум* (45%+)")
-    lines.append("  • Узумбанк — *22 000 000 сум* (44%) ⚠️ просрочка")
-    lines.append("  • Юрлица (гос.) — *~95 000 000 сум* 🔴 КРИТИЧНО до 30.06")
-    lines.append("  • Pulinform рассрочка — *25 000 000 сум* (0%)")
-    lines.append("")
-    lines.append("👥 Люди (я должен им):")
-    lines.append("  • Сирож ака — *$600* (до 10.07.2026) 🔴 СРОЧНО")
-    lines.append("  • Навруз — *$1 600* ⚠️ срочный")
-    lines.append("  • Истам — *$2 287* ⚠️ приоритет")
-    lines.append("  • Иван — *$4 920* (не срочный)")
-    lines.append("  • Илёс ака — *$100*")
-    lines.append("")
-    lines.append("📊 Итого личных долгов: *$9 507*")
-
-    # ── Кто должен ТЕБЕ ─────────────────────────────
-    lines.append("")
-    lines.append("💰 *Кто должен мне:*\n")
-    lines.append("  • Навруз — *$1 600*")
-    lines.append("  • Умар — *$200*")
-    lines.append("  • Лазиз (брат) — *$300*")
-    lines.append("")
-    lines.append("📊 Итого должны мне: *$2 100*")
-
-    return "\n".join(lines)
+    """Показывает кому ты должен и кто должен тебе — ИЗ БАЗЫ ДАННЫХ."""
+    from bot.services.debts import get_debts_summary_text
+    return get_debts_summary_text()
 
 
 # ──────────────────────────────────────────────────
@@ -414,6 +338,14 @@ def process_finance(user_id, text: str) -> str | None:
         return save_transaction(user_id, data)
     elif t == "debt_repay":
         return save_debt_repayment(user_id, data)
+    elif t == "update_debt":
+        from bot.services.debts import update_debt_amount
+        name = data.get("person") or data.get("comment") or ""
+        amount = data.get("amount")
+        if not name or amount is None:
+            return None  # недостаточно данных — пусть AI уточнит
+        result = update_debt_amount(name, amount, data.get("currency"))
+        return result if result else f"❌ Не нашёл долг «{name}» в базе. Проверь название."
     elif t == "query_balance":
         return get_balance(user_id)
     elif t == "query_report":

@@ -161,17 +161,13 @@ def process_smart_input(user_id, text: str, bot=None, message=None) -> str | Non
 
         return result_text
 
-    # type == "chat" — проверяем трекеры (сон/вес/дофамин/привычки)
-    from bot.services.trackers import process_tracker
-    tracker_result = process_tracker(user_id, text)
-    if tracker_result:
-        return tracker_result
-
-    # Проверяем базу знаний (запомни/что я знаю/знания)
+    # type == "chat" — проверяем базу знаний (запомни/что я знаю/знания)
+    # ПРИМЕЧАНИЕ: трекеры (сон/вес/дофамин) уже проверены в text.py ДО вызова
+    # smart_input — здесь повторно НЕ проверяем, чтобы не делать лишний GPT-запрос.
     from bot.services.knowledge import process_knowledge
     knowledge_result = process_knowledge(user_id, text)
     if knowledge_result:
         return knowledge_result
 
-    # Не трекер, не знание, не задача — вернуть None, пусть AI обработает как обычно
+    # Не знание, не задача — вернуть None, пусть AI обработает как обычно
     return None
