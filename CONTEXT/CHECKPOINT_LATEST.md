@@ -30,9 +30,9 @@
 ## МОДЕЛИ ИИ (на сервере)
 
 - **Основная:** GPT-5 mini (OPENAI_API_KEY в .env)
-- **Запасная:** Groq llama-3.1-8b-instant (GROQ_API_KEY в .env)
-- **Третья:** Gemini 2.0 Flash (GEMINI_API_KEY в .env)
+- **Запасная:** Gemini 2.0 Flash (GEMINI_API_KEY в .env)
 - **Крайняя:** GPT-4.1 (OPENAI_API_KEY в .env)
+- **Groq:** убран
 - **Парсер финансов:** GPT-4.1
 - **Классификатор:** gpt-4o-mini
 

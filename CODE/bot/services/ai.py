@@ -17,12 +17,12 @@ from bot import config
 from bot.services.memory import save_memory, load_memory
 from bot.utils.docx import save_docx
 
-# OpenAI клиент (основной — GPT-5 mini)
+# OpenAI клиент (основной — GPT-5 mini + крайний запас GPT-4.1)
 client = OpenAI(api_key=config.OPENAI_API_KEY)
 
 import os
 
-# Gemini клиент (второй запасной — бесплатный, но менее качественный)
+# Gemini клиент (второй запасной)
 gemini_client = None
 _gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
 if _gemini_key:
@@ -31,22 +31,9 @@ if _gemini_key:
             api_key=_gemini_key,
             base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
         )
-        print("[AI] Gemini подключён — резервная модель gemini-2.0-flash")
+        print("[AI] Gemini подключён — второй резерв gemini-2.0-flash")
     except Exception as e:
         print(f"[AI] Gemini не подключился: {e}")
-
-# Groq клиент (третий запасной)
-groq_client = None
-_groq_key = os.environ.get("GROQ_API_KEY", "").strip()
-if _groq_key:
-    try:
-        groq_client = OpenAI(
-            api_key=_groq_key,
-            base_url="https://api.groq.com/openai/v1"
-        )
-        print("[AI] Groq подключён — резервная модель llama-3.1-8b-instant")
-    except Exception as e:
-        print(f"[AI] Groq не подключился: {e}")
 
 # ==================================================
 # SYSTEM PROMPT (характер и роль бота — без изменений)
@@ -352,7 +339,7 @@ def ask_ai(user_id, text: str) -> str:
                 raise  # другая ошибка — пробрасываем сразу
         raise last_exc  # все попытки исчерпаны
 
-    # Стратегия: GPT-5 mini (основной) → Groq (запасной) → Gemini (третий) → GPT-4.1 (крайний)
+    # Стратегия: GPT-5 mini (основной) → Gemini 2.0 Flash (второй) → GPT-4.1 (крайний)
     try:
         response = client.chat.completions.create(
             model="gpt-5-mini",
@@ -361,33 +348,8 @@ def ask_ai(user_id, text: str) -> str:
         )
         print("[AI] Ответил GPT-5 mini")
     except Exception as e:
-        print(f"[AI] GPT-5 mini ошибка ({e}), переключаюсь на Groq")
-        if groq_client:
-            try:
-                response = groq_client.chat.completions.create(
-                    model="llama-3.1-8b-instant",
-                    messages=messages,
-                    max_tokens=1024,
-                )
-                print("[AI] Ответил Groq")
-            except Exception as e2:
-                print(f"[AI] Groq ошибка ({e2}), переключаюсь на Gemini")
-                if gemini_client:
-                    try:
-                        response = _call_gemini(messages)
-                        print("[AI] Ответил Gemini (резерв)")
-                    except Exception as e3:
-                        print(f"[AI] Gemini ошибка ({e3}), переключаюсь на GPT-4.1")
-                        response = client.chat.completions.create(
-                            model="gpt-4.1",
-                            messages=messages,
-                        )
-                else:
-                    response = client.chat.completions.create(
-                        model="gpt-4.1",
-                        messages=messages,
-                    )
-        elif gemini_client:
+        print(f"[AI] GPT-5 mini ошибка ({e}), переключаюсь на Gemini")
+        if gemini_client:
             try:
                 response = _call_gemini(messages)
                 print("[AI] Ответил Gemini (резерв)")
@@ -397,11 +359,13 @@ def ask_ai(user_id, text: str) -> str:
                     model="gpt-4.1",
                     messages=messages,
                 )
+                print("[AI] Ответил GPT-4.1 (крайний резерв)")
         else:
             response = client.chat.completions.create(
                 model="gpt-4.1",
                 messages=messages,
             )
+            print("[AI] Ответил GPT-4.1 (крайний резерв)")
 
     ai_text = response.choices[0].message.content
 
