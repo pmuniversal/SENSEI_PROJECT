@@ -340,11 +340,12 @@ def ask_ai(user_id, text: str) -> str:
         raise last_exc  # все попытки исчерпаны
 
     # Стратегия: GPT-5 mini (основной) → Gemini 2.0 Flash (второй) → GPT-4.1 (крайний)
+    # ВАЖНО: GPT-5 модели НЕ принимают max_tokens — только max_completion_tokens
     try:
         response = client.chat.completions.create(
             model="gpt-5-mini",
             messages=messages,
-            max_tokens=1500,
+            max_completion_tokens=2000,
         )
         print("[AI] Ответил GPT-5 mini")
     except Exception as e:
