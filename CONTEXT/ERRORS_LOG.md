@@ -6,6 +6,19 @@
 
 ---
 
+## [2026-06-19] [ДЕПЛОЙ] — неверная команда для просмотра логов supervisor
+
+**Суть:** Дал команду `tail -30 /var/log/supervisor/telegrambot.log` — файл не существует в этом контейнере. Получили ошибку `No such file or directory`.
+
+**Решение:** Правильная команда для просмотра логов через supervisorctl:
+```bash
+supervisorctl tail telegrambot
+```
+
+**Как не повторить:** В этом контейнере логи supervisor читаются ТОЛЬКО через `supervisorctl tail telegrambot`. Путь `/var/log/supervisor/` не существует. Всегда использовать supervisorctl.
+
+---
+
 ## [2026-06-18] [ДЕПЛОЙ] — curl не обновляет файлы на сервере
 
 **Суть:** `curl -o /app/bot/services/ai.py https://raw.githubusercontent.com/...` качает старую версию из кеша GitHub даже после push.
