@@ -61,7 +61,7 @@ _SEED = [
 
     ("person_owes_me", "Навруз",       1600, "USD", "", "", 1),
     ("person_owes_me", "Умар",         200,  "USD", "", "", 2),
-    ("person_owes_me", "Лазиз (брат)", 300,  "USD", "", "", 3),
+    ("person_owes_me", "Лазиз (брат)", 600,  "USD", "", "", 3),
 ]
 
 
@@ -204,6 +204,35 @@ def _find_debt(name: str, category: str = None):
         if first and first in row[2].lower():
             return row
     return None
+
+
+def add_debt(category: str, name: str, amount: float, currency: str,
+             rate: str = "", note: str = "") -> str:
+    """Добавляет новую запись долга."""
+    db.cursor.execute("SELECT MAX(sort_order) FROM debts WHERE category=?", (category,))
+    row = db.cursor.fetchone()
+    order = (row[0] or 0) + 1
+    db.cursor.execute("""
+    INSERT INTO debts (category, name, amount, currency, rate, note, sort_order, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (category, name, amount, currency, rate, note, order, str(datetime.now())))
+    db.conn.commit()
+    fmt = _fmt_uzs if currency == "UZS" else _fmt_usd
+    return f"✅ *Добавлен долг*\n\n📌 {name}: {fmt(amount)}"
+
+
+def rename_debt(old_name: str, new_name: str) -> str | None:
+    """Переименовывает долг."""
+    row = _find_debt(old_name)
+    if row is None:
+        return None
+    debt_id = row[0]
+    db.cursor.execute(
+        "UPDATE debts SET name=?, updated_at=? WHERE id=?",
+        (new_name, str(datetime.now()), debt_id)
+    )
+    db.conn.commit()
+    return f"✏️ Переименовано: *{old_name}* → *{new_name}*"
 
 
 def update_debt_amount(name: str, new_amount: float, currency: str = None) -> str | None:

@@ -183,6 +183,9 @@ def register(bot) -> None:
 
             # AI (основной путь для обычного разговора — без лишних GPT-вызовов)
             ai_text = ask_ai(user_id, combined_text)
+            # Защита от пустого ответа (Telegram не принимает пустые сообщения)
+            if not ai_text or not ai_text.strip():
+                ai_text = "Получил. Обрабатываю — напиши ещё раз если нет ответа."
             _send_long(bot_ref, message, ai_text)
 
         except Exception as e:
