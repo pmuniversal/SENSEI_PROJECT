@@ -2,6 +2,24 @@
 
 ---
 
+## 19.06.2026 — Выбран GitHub Actions автодеплой (настройка в процессе)
+
+**Что решили:**
+- Выбран **Вариант 2 — GitHub Actions + автодеплой** для устранения ручного деплоя через Portainer.
+- После настройки: `git push` → GitHub Actions → SSH на VPS → `git pull` + `supervisorctl restart telegrambot`.
+- Никаких ручных команд в Portainer.
+
+**Где остановились:**
+- Нужно зайти на хост-Ubuntu VPS (не в контейнер!) и сгенерировать SSH-ключ.
+- Команды: `ssh-keygen -t ed25519 -C "github-actions" -f ~/.ssh/github_actions -N ""`
+- Затем добавить приватный ключ в GitHub Secrets и создать `.github/workflows/deploy.yml`.
+
+**Файлы затронуты:** пока только контекст (checkpoint, changelog).
+
+**Откат:** не требуется, настройка ещё не начата.
+
+---
+
 ## 19.06.2026 — Смена основной модели: GPT-5 mini вместо Gemini 2.0 Flash
 
 **Что изменили:**
