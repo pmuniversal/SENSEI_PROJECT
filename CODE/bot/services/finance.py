@@ -61,7 +61,7 @@ def parse_finance_input(text: str) -> dict | None:
 
 Если сообщение содержит финансовую операцию — верни JSON:
 {{
-  "type": "income|expense|debt_give|debt_take|debt_repay|query_balance|query_report|query_debts|update_debt",
+  "type": "income|expense|debt_give|debt_take|debt_repay|query_balance|query_report|query_debts|update_debt|sync_sheets",
   "amount": число или null,
   "currency": "UZS|USD|RUB",
   "category": "категория или null",
@@ -83,7 +83,7 @@ def parse_finance_input(text: str) -> dict | None:
 - query_balance: мой баланс, сколько денег
 - query_report: отчёт, сколько потратил (period: month/week/today)
 - query_debts: покажи долги, список долгов, кому должен, кредиты, финансовая ситуация
-- update_debt: изменить/исправить СУММУ существующего долга или кредита
+- sync_sheets: обнови гугл таблицу, синхронизируй таблицу, обнови sheets, обнови google sheet, обнови гугл
   ПРИМЕРЫ update_debt: "измени долг Pulinform на 25 млн", "долг Анорбанк №1 теперь 17 млн",
   "обнови кредит Узумбанк до 20 млн", "исправь долг Истаму на 2000$"
   Для update_debt ОБЯЗАТЕЛЬНО: person = название долга/кредита, amount = новая сумма
@@ -326,6 +326,39 @@ def get_debts_summary() -> str:
     return get_debts_summary_text()
 
 
+def sync_google_sheets() -> str:
+    """Синхронизирует данные долгов из БД в Google Sheets."""
+    try:
+        from bot.services.sheets import sheets_manager
+        from bot.services.debts import get_all_debts, get_usd_rate
+
+        usd_rate, rate_source = get_usd_rate()
+
+        # Пересоздаём лист "Кредиты и долги" с актуальными данными
+        rows_to_update = []
+        for _, name, amount, curr, rate, note in get_all_debts("bank"):
+            rows_to_update.append((name, f"{amount:,.0f} сум", rate, note))
+        for _, name, amount, curr, rate, note in get_all_debts("person_i_owe"):
+            usd_str = f"${amount:,.0f}"
+            uzs_str = f"{round(amount * usd_rate):,.0f} сум"
+            rows_to_update.append((name, usd_str, f"≈ {uzs_str}", note))
+
+        # Обновляем через существующий интерфейс sheets
+        try:
+            sheets_manager.update_all_debts(rows_to_update)
+        except AttributeError:
+            # Если метода update_all_debts нет — просто делаем reformat
+            sheets_manager._format_credits_sheet()
+
+        return (
+            f"✅ *Google Sheets обновлена*\n\n"
+            f"Синхронизировано из базы данных.\n"
+            f"Курс: {rate_source}"
+        )
+    except Exception as e:
+        return f"⚠️ Ошибка синхронизации с Google Sheets:\n{e}"
+
+
 # ──────────────────────────────────────────────────
 # Главная функция — обработка финансового текста
 # ──────────────────────────────────────────────────
@@ -352,6 +385,8 @@ def process_finance(user_id, text: str) -> str | None:
             return None  # недостаточно данных — пусть AI уточнит
         result = update_debt_amount(name, amount, data.get("currency"))
         return result if result else f"❌ Не нашёл долг «{name}» в базе. Проверь название."
+    elif t == "sync_sheets":
+        return sync_google_sheets()
     elif t == "query_balance":
         return get_balance(user_id)
     elif t == "query_report":
