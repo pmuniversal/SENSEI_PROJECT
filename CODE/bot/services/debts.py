@@ -112,29 +112,57 @@ def get_all_debts(category: str = None) -> list:
     return db.cursor.fetchall()
 
 
-def get_usd_rate() -> float:
-    """Получает курс USD/UZS из ЦБ РУз.
-    Ипак йули (курс продажи) ≈ ЦБ + ~1.5%.
-    Возвращает курс продажи Ипак йули или резервный 12800 если API недоступен.
+def get_usd_rate() -> tuple[float, str]:
+    """Получает курс продажи USD из Ипак йули банка (официальный сайт).
+    Возвращает (курс_продажи, источник_строка).
+    При недоступности сайта — ЦБ РУз как запасной вариант.
     """
+    # 1. Парсим сайт Ипак йули напрямую
+    try:
+        url = "https://ipakyulibank.uz"
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"}
+        )
+        html = urllib.request.urlopen(req, timeout=6).read().decode("utf-8", errors="ignore")
+        # Ищем паттерн курса в таблице: "$ AQSh dollar | 12 040 | 12 140"
+        # или числа после "USD" рядом друг с другом
+        import re as _re
+        # Ищем два числа вида 1xxxx подряд (покупка | продажа)
+        matches = _re.findall(r'1[12]\s*[\s,.]?\s*\d{3}', html.replace('\xa0', ' '))
+        # Берём уникальные числа, убираем пробелы
+        nums = []
+        for m in matches:
+            n = int(_re.sub(r'[\s.,]', '', m))
+            if 10000 < n < 20000 and n not in nums:
+                nums.append(n)
+        if len(nums) >= 2:
+            # Первое — покупка, второе — продажа
+            sell = nums[1]
+            return float(sell), f"Ипак йули (касса, продажа): {sell:,} сум/$"
+        elif len(nums) == 1:
+            return float(nums[0]), f"Ипак йули: {nums[0]:,} сум/$"
+    except Exception as e:
+        print(f"[DEBTS] Ипак йули недоступен: {e}")
+
+    # 2. Запасной: ЦБ РУз API
     try:
         url = "https://cbu.uz/en/arkhiv-kursov-valyut/json/"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
         data = json.loads(urllib.request.urlopen(req, timeout=5).read().decode())
         for item in data:
             if item.get("Ccy") == "USD":
-                cbu_rate = float(item["Rate"])
-                # Курс продажи Ипак йули ≈ ЦБ + 1.5%
-                ipak_sell = round(cbu_rate * 1.015)
-                return ipak_sell
+                rate = float(item["Rate"])
+                return rate, f"ЦБ РУз: {rate:,.0f} сум/$"
     except Exception as e:
-        print(f"[DEBTS] Курс ЦБ недоступен: {e}")
-    return 12800  # резервный курс
+        print(f"[DEBTS] ЦБ РУз недоступен: {e}")
+
+    return 12800.0, "резервный курс: 12 800 сум/$"
 
 
 def get_debts_summary_text() -> str:
     """Формирует читаемую сводку долгов ИЗ БАЗЫ ДАННЫХ с итогами в сумах и долларах."""
-    usd_rate = get_usd_rate()
+    usd_rate, rate_source = get_usd_rate()
     lines = []
 
     # ── Кому ТЫ должен: Банки ────────────────────────
@@ -147,9 +175,7 @@ def get_debts_summary_text() -> str:
         lines.append(f"  • {name} — *{_fmt_uzs(amount)}*{rate_str}{note_str}")
         total_bank_uzs += amount
     total_bank_usd = round(total_bank_uzs / usd_rate)
-    lines.append(f"\n📊 Итого банковских долгов:")
-    lines.append(f"  *{_fmt_uzs(total_bank_uzs)}* ≈ *${total_bank_usd:,}*")
-    lines.append(f"  _(курс продажи Ипак йули: {usd_rate:,} сум/$)_")
+    lines.append(f"\n📊 Итого банков: *{_fmt_uzs(total_bank_uzs)}* ≈ *${total_bank_usd:,}*")
 
     # ── Кому ТЫ должен: Люди ─────────────────────────
     lines.append("")
@@ -160,14 +186,14 @@ def get_debts_summary_text() -> str:
         lines.append(f"  • {name} — *{_fmt_usd(amount)}*{note_str}")
         total_i_owe_usd += amount
     total_i_owe_uzs = round(total_i_owe_usd * usd_rate)
-    lines.append(f"\n📊 Итого личных долгов:")
-    lines.append(f"  *{_fmt_usd(total_i_owe_usd)}* ≈ *{_fmt_uzs(total_i_owe_uzs)}*")
+    lines.append(f"\n📊 Итого людям: *{_fmt_usd(total_i_owe_usd)}* ≈ *{_fmt_uzs(total_i_owe_uzs)}*")
 
     # ── ОБЩИЙ ИТОГ ────────────────────────────────────
     grand_total_uzs = total_bank_uzs + total_i_owe_uzs
     grand_total_usd = round(grand_total_uzs / usd_rate)
     lines.append("")
     lines.append(f"💀 *ОБЩИЙ ДОЛГ: {_fmt_uzs(grand_total_uzs)}* ≈ *${grand_total_usd:,}*")
+    lines.append(f"_📈 {rate_source}_")
 
     # ── Кто должен ТЕБЕ ─────────────────────────────
     lines.append("")
@@ -183,11 +209,13 @@ def get_debts_summary_text() -> str:
 
 
 def get_debts_for_prompt() -> str:
-    """Компактная сводка долгов для подстановки в системный промпт AI.
-
-    Так AI ВСЕГДА видит актуальные цифры из БД, а не устаревший хардкод.
-    """
+    """Компактная сводка долгов для подстановки в системный промпт AI."""
+    try:
+        usd_rate, rate_source = get_usd_rate()
+    except Exception:
+        usd_rate, rate_source = 12800.0, "резервный курс"
     parts = ["ТЕКУЩИЕ ДОЛГИ (актуально из базы, всегда опирайся на эти цифры):"]
+    parts.append(f"Курс: {rate_source}")
 
     parts.append("Банковские кредиты:")
     for _, name, amount, curr, rate, note in get_all_debts("bank"):
