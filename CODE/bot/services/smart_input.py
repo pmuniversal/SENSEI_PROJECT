@@ -31,46 +31,52 @@ SPHERES = {
 
 def classify_message(text: str) -> dict:
     """
-    Через GPT определяет тип сообщения и извлекает структурированные данные.
-    Возвращает dict с полями:
-      - type: 'task' | 'reminder' | 'query' | 'chat'
-      - sphere: 'pulinform' | 'youtube' | 'services' | 'life' | null
-      - task_text: текст задачи (если type=task)
-      - remind_time: время напоминания ISO (если type=reminder)
-      - remind_text: текст напоминания
-      - query_sphere: сфера для запроса задач (если type=query)
+    Единый умный классификатор через GPT-4o-mini.
+    Понимает сокращения, опечатки, полуслова, смешанные языки (рус/узб/англ).
+    Возвращает dict с полем type и нужными данными.
     """
     now = datetime.now()
-    system_prompt = f"""Ты — классификатор сообщений для личного ассистента.
+    system_prompt = f"""Ты — умный классификатор команд личного ассистента Сенсей.
 Текущая дата и время: {now.strftime('%Y-%m-%d %H:%M')}
+Пользователь — Бекзод (узбек, пишет на русском, иногда добавляет узбекские/английские слова).
 
-Определи тип сообщения пользователя и извлеки данные. Верни ТОЛЬКО JSON:
+ВАЖНО: Понимай сокращения, опечатки, полуслова, неформальный язык.
+Например: "гугл тбл" = Google Sheets, "обнови тблцу" = обновить таблицу,
+"напомн завтра" = напоминание, "долги" = показать долги и т.д.
 
-Если это ЗАДАЧА (содержит слова: задача, сделать, нужно, создать, запустить, купить, дедлайн):
-{{"type": "task", "sphere": "youtube|pulinform|services|life|null", "task_text": "текст задачи", "deadline": "YYYY-MM-DD или null"}}
+Верни ТОЛЬКО JSON одного из этих типов:
 
-Если это НАПОМИНАНИЕ (содержит слова: напомни, напоминание, remind, через X часов/дней, в такое-то время, N числа):
-{{"type": "reminder", "sphere": "youtube|pulinform|services|life|null", "remind_time": "YYYY-MM-DD HH:MM", "remind_text": "о чём напомнить"}}
+1. ФИНАНСОВЫЕ ОПЕРАЦИИ (деньги, траты, долги, кредиты, таблица):
+{{"type": "finance", "text": "{text}"}}
+Примеры: "потратил 50к на еду", "долг анорбанк", "покажи долги", "обнови гугл таблицу",
+"синхронизируй таблицу", "отдал 100$ сирожу", "измени долг pulinform на 30 млн",
+"баланс", "расходы за месяц", "заработал 500$"
 
-Если это ЗАПРОС ЗАДАЧ (что у меня по..., покажи задачи, мои задачи по сфере):
+2. ТРЕКЕРЫ (сон, вес, привычки, дофамин):
+{{"type": "tracker", "text": "{text}"}}
+Примеры: "спал 7 часов", "вес 82", "залипал в тикток 2 часа", "привычки", "стрик"
+
+3. ЗАДАЧА (что-то нужно сделать, создать, запустить):
+{{"type": "task", "sphere": "youtube|pulinform|services|life|null", "task_text": "текст", "deadline": "YYYY-MM-DD или null"}}
+Примеры: "задача сделать сайт", "нужно позвонить клиенту", "создать канал на ютубе дедлайн 1 июля"
+
+4. НАПОМИНАНИЕ:
+{{"type": "reminder", "sphere": "youtube|pulinform|services|life|null", "remind_time": "YYYY-MM-DD HH:MM", "remind_text": "текст"}}
+Примеры: "напомни 25го заплатить аренду", "напомни через 2 часа позвонить"
+
+5. ЗАПРОС ЗАДАЧ:
 {{"type": "query", "query_sphere": "youtube|pulinform|services|life|all"}}
+Примеры: "что у меня по ютубу", "покажи задачи", "мои задачи по работе"
 
-Если это ОБЫЧНЫЙ РАЗГОВОР/ВОПРОС (всё остальное):
+6. БАЗА ЗНАНИЙ:
+{{"type": "knowledge", "text": "{text}"}}
+Примеры: "запомни что...", "что я знаю о...", "база знаний"
+
+7. ОБЫЧНЫЙ РАЗГОВОР (всё что не попало выше):
 {{"type": "chat"}}
 
-ВАЖНО — следующие запросы это НЕ задачи и НЕ query, верни {{"type": "chat"}}:
-- всё про долги, кредиты, деньги (покажи долги, список кредитов, финансы, баланс, расходы)
-- всё про сон, вес, привычки, дофамин (трекеры)
-- все вопросы и разговоры которые не про задачи/напоминания
-
-Правила определения сферы:
-- pulinform: работа, взыскание, коллектор, Pulinform
-- youtube: ютуб, YouTube, канал, видео, контент, ниша
-- services: сайт, SaaS, услуги, бизнес, клиент, HVAC, plumber
-- life: жизнь, быт, дом, семья, здоровье
-
-Если сфера неясна — поставь null.
-Верни ТОЛЬКО JSON, без комментариев и markdown."""
+Сферы: pulinform=работа/взыскание, youtube=ютуб/канал/видео, services=сайт/saas/бизнес/USA, life=быт/семья/здоровье
+Верни ТОЛЬКО JSON без объяснений."""
 
     response = client.chat.completions.create(
         model="gpt-4o-mini",
@@ -95,19 +101,44 @@ def classify_message(text: str) -> dict:
 
 def process_smart_input(user_id, text: str, bot=None, message=None) -> str | None:
     """
-    Обрабатывает умный ввод. Возвращает:
-      - None если это обычный чат (пусть AI обработает)
-      - Строку с ответом если это задача/напоминание/запрос
+    Единая точка входа умного ввода.
+    Классификатор определяет тип → роутим в нужный обработчик.
+    Возвращает None только для обычного чата.
     """
     result = classify_message(text)
     msg_type = result.get("type", "chat")
 
+    # Финансовые операции → finance.py
+    if msg_type == "finance":
+        from bot.services.finance import process_finance
+        fin_result = process_finance(user_id, result.get("text", text))
+        if fin_result is not None:
+            return fin_result
+        # GPT решил что финансовое, но парсер не распознал → в AI
+        return None
+
+    # Трекеры → trackers.py
+    if msg_type == "tracker":
+        from bot.services.trackers import process_tracker
+        tracker_result = process_tracker(user_id, result.get("text", text))
+        if tracker_result is not None:
+            return tracker_result
+        return None
+
+    # База знаний → knowledge.py
+    if msg_type == "knowledge":
+        from bot.services.knowledge import process_knowledge
+        knowledge_result = process_knowledge(user_id, result.get("text", text))
+        if knowledge_result:
+            return knowledge_result
+        return None
+
+    # Задача
     if msg_type == "task":
         task_text = result.get("task_text", text)
         sphere = result.get("sphere")
         deadline = result.get("deadline")
 
-        # Добавляем сферу в текст задачи если она определена
         prefix = ""
         if sphere and sphere != "null":
             sphere_names = {
@@ -125,24 +156,25 @@ def process_smart_input(user_id, text: str, bot=None, message=None) -> str | Non
         add_task(user_id, full_task)
         return f"✅ Задача добавлена:\n\n{full_task}"
 
-    elif msg_type == "reminder":
+    # Напоминание
+    if msg_type == "reminder":
         remind_time = result.get("remind_time", "")
         remind_text = result.get("remind_text", text)
 
         if not remind_time:
-            return None  # Не удалось определить время — пусть AI разберётся
+            return None
 
         normalized = add_reminder(user_id, remind_time, remind_text)
         return f"⏰ Напоминание сохранено:\n\n{remind_text}\n📅 Когда: {normalized}"
 
-    elif msg_type == "query":
+    # Запрос задач
+    if msg_type == "query":
         query_sphere = result.get("query_sphere", "all")
         rows = list_tasks(user_id)
 
         if not rows:
             return "📌 Нет активных задач."
 
-        # Фильтруем по сфере если указана
         if query_sphere and query_sphere != "all":
             sphere_names = {
                 "pulinform": "Pulinform",
@@ -161,13 +193,5 @@ def process_smart_input(user_id, text: str, bot=None, message=None) -> str | Non
 
         return result_text
 
-    # type == "chat" — проверяем базу знаний (запомни/что я знаю/знания)
-    # ПРИМЕЧАНИЕ: трекеры (сон/вес/дофамин) уже проверены в text.py ДО вызова
-    # smart_input — здесь повторно НЕ проверяем, чтобы не делать лишний GPT-запрос.
-    from bot.services.knowledge import process_knowledge
-    knowledge_result = process_knowledge(user_id, text)
-    if knowledge_result:
-        return knowledge_result
-
-    # Не знание, не задача — вернуть None, пусть AI обработает как обычно
+    # chat → вернуть None, пусть AI обработает
     return None
