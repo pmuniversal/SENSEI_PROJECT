@@ -329,17 +329,35 @@ def ask_ai(user_id, text: str) -> str:
     ]
     messages.extend(load_memory(user_id))
 
+    def _call_gemini(msgs):
+        """Вызов Gemini с авто-обрезкой истории при ошибке too many documents."""
+        history = [m for m in msgs if m["role"] != "system"]
+        system_msgs = [m for m in msgs if m["role"] == "system"]
+        attempts = [len(history), max(len(history) // 2, 1), 2]
+        last_exc = None
+        for limit in attempts:
+            trimmed = system_msgs + history[-limit:]
+            try:
+                return gemini_client.chat.completions.create(
+                    model="gemini-2.0-flash",
+                    messages=trimmed,
+                    max_tokens=1500,
+                )
+            except Exception as e:
+                err = str(e)
+                if "too many images and documents" in err or "too many" in err.lower():
+                    print(f"[AI] Gemini: слишком много сообщений ({limit}), обрезаю до {limit // 2 or 2}")
+                    last_exc = e
+                    continue
+                raise  # другая ошибка — пробрасываем сразу
+        raise last_exc  # все попытки исчерпаны
+
     # Стратегия: Gemini (основной) → Groq (запасной) → OpenAI (крайний)
     if gemini_client:
         try:
-            response = gemini_client.chat.completions.create(
-                model="gemini-2.0-flash",
-                messages=messages,
-                max_tokens=1500,
-            )
+            response = _call_gemini(messages)
         except Exception as e:
             print(f"[AI] Gemini ошибка ({e}), переключаюсь на Groq/OpenAI")
-            gemini_client_local = None
             if groq_client:
                 try:
                     response = groq_client.chat.completions.create(
