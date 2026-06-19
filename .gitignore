@@ -32,3 +32,10 @@ ltm/runtime/*
 ltm/reports/*
 ltm/snapshots/*
 # --- /ltm-power ---
+
+# secrets — не коммитить (added 2026-06-20)
+*.key
+*.key.pub
+*.pem
+ai-backups-*.json
+*credentials*.json
